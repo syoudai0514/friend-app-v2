@@ -1,10 +1,11 @@
 "use client";
 
+import { OrbitControls } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
-import { useState } from "react";
+import { useState, type RefObject } from "react";
+import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import type { Expression } from "@/lib/expressions";
 import { VrmModel } from "./VrmModel";
-import type { CharacterView } from "./view";
 
 export function VrmCanvas({
   url,
@@ -12,7 +13,7 @@ export function VrmCanvas({
   expression,
   talking,
   reducedMotion,
-  view,
+  orbitControlsRef,
   onReady,
   onError,
 }: {
@@ -21,7 +22,7 @@ export function VrmCanvas({
   expression: Expression;
   talking: boolean;
   reducedMotion: boolean;
-  view: CharacterView;
+  orbitControlsRef: RefObject<OrbitControlsImpl | null>;
   onReady?: () => void;
   onError?: () => void;
 }) {
@@ -55,9 +56,19 @@ export function VrmCanvas({
         expression={expression}
         talking={talking}
         reducedMotion={reducedMotion}
-        view={view}
+        orbitControlsRef={orbitControlsRef}
         onReady={onReady}
         onError={onError}
+      />
+      {/* 1本指ドラッグ=回り込み、2本指ピンチ=ズーム、2本指ドラッグ=位置ずらし（既定の割り当て） */}
+      <OrbitControls
+        ref={orbitControlsRef}
+        enableDamping
+        dampingFactor={0.15}
+        minDistance={0.15}
+        maxDistance={8}
+        minPolarAngle={0.05}
+        maxPolarAngle={Math.PI - 0.05}
       />
     </Canvas>
   );

@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { createVRMAnimationClip } from "@pixiv/three-vrm-animation";
+import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { EXPRESSIONS, type Expression } from "@/lib/expressions";
 import { useVrm } from "./useVrm";
 import { useVrma } from "./useVrma";
-import type { CharacterView } from "./view";
 
 /** 気分の表情プリセット。まばたき(blink*)や口の形(aa)とは別に、毎フレーム一度リセットしてから適用する */
 const MOOD_PRESETS = ["happy", "angry", "sad", "relaxed", "surprised", "neutral"];
@@ -32,7 +32,7 @@ export function VrmModel({
   expression,
   talking,
   reducedMotion,
-  view,
+  orbitControlsRef,
   onReady,
   onError,
 }: {
@@ -41,7 +41,7 @@ export function VrmModel({
   expression: Expression;
   talking: boolean;
   reducedMotion: boolean;
-  view: CharacterView;
+  orbitControlsRef: RefObject<OrbitControlsImpl | null>;
   onReady?: () => void;
   onError?: () => void;
 }) {
@@ -91,8 +91,8 @@ export function VrmModel({
     };
   }, [vrm, vrmAnimation]);
 
-  // v1の立ち絵に近いサイズ感（全身〜ふくらはぎ）を基準に、タップで
-  // 見上げ／背面などの視点にも切り替えられるようにする。
+  // v1の立ち絵に近いサイズ感（全身〜ふくらはぎ）になる位置を初期カメラとして計算し、
+  // OrbitControlsの注視点として渡す。そのあとの拡大・回転・移動はユーザー操作に任せる。
   // モデルごとの身長差を吸収するため、固定距離ではなく実際の全身の高さから逆算する
   useEffect(() => {
     if (!vrm) return;
@@ -106,26 +106,23 @@ export function VrmModel({
     const perspective = camera as THREE.PerspectiveCamera;
     const vFov = THREE.MathUtils.degToRad(perspective.fov);
 
-    if (view === "low") {
-      // 足元近くから、顔のあたりを見上げる
-      const lookY = box.min.y + height * 0.82;
-      const distance = fitDistance(height * 0.62, vFov);
-      camera.position.set(centerX, box.min.y + height * 0.04, centerZ + distance * 0.8);
-      camera.lookAt(centerX, lookY, centerZ);
-      return;
-    }
-
-    // front（全身）・back（背面）は同じ画角で、Zの正負だけを反転させる
     const visibleTop = box.max.y + height * 0.06;
     const visibleBottom = box.min.y + height * 0.06;
     const visibleHeight = visibleTop - visibleBottom;
     const lookY = (visibleTop + visibleBottom) / 2;
     const distance = fitDistance(visibleHeight, vFov);
-    const side = view === "back" ? -1 : 1;
 
-    camera.position.set(centerX, lookY, centerZ + distance * side);
+    camera.position.set(centerX, lookY, centerZ + distance);
     camera.lookAt(centerX, lookY, centerZ);
-  }, [vrm, camera, view]);
+
+    const controls = orbitControlsRef.current;
+    if (controls) {
+      controls.target.set(centerX, lookY, centerZ);
+      controls.update();
+      // これで「↺」ボタン(reset)がこの初期位置に戻るようになる
+      controls.saveState();
+    }
+  }, [vrm, camera, orbitControlsRef]);
 
   useFrame((state, delta) => {
     if (!vrm) return;

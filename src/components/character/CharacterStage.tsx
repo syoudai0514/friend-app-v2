@@ -1,11 +1,11 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import type { Expression } from "@/lib/expressions";
 import type { Look } from "@/lib/types";
 import { posterUrl, vrmaUrl, vrmUrl } from "@/lib/vrm-assets";
-import { CHARACTER_VIEWS } from "./view";
 
 // three系はサイズが大きいので、クライアントでしか要らないWebGL部分だけ切り出して遅延読み込みする
 const VrmCanvas = dynamic(() => import("./VrmCanvas").then((m) => m.VrmCanvas), { ssr: false });
@@ -28,6 +28,9 @@ function usePrefersReducedMotion(): boolean {
  * poster画像は読み込み中には出さない（VRMのメタ情報についている顔クローズアップの
  * サムネイルを流用しているだけなので、全身が映るVRMに切り替わった瞬間サイズが
  * 変わって見えてしまうため。VRMが失敗したときの最終手段としてのみ使う）
+ *
+ * カメラは1本指ドラッグ=回り込み、2本指ピンチ=ズーム、2本指ドラッグ=位置ずらしで
+ * 自由に動かせる（OrbitControls）。見失ったときのために右下に戻すボタンを出す
  */
 export function CharacterStage({
   look,
@@ -45,32 +48,26 @@ export function CharacterStage({
   const reducedMotion = usePrefersReducedMotion();
   const [vrmStatus, setVrmStatus] = useState<"loading" | "ready" | "error">("loading");
   const [posterFailed, setPosterFailed] = useState(false);
-  const [viewIndex, setViewIndex] = useState(0);
-  const view = CHARACTER_VIEWS[viewIndex];
+  const orbitControlsRef = useRef<OrbitControlsImpl | null>(null);
 
-  // バリアントが変わったら読み込み状態と視点をリセットする
+  // バリアントが変わったら読み込み状態をリセットする
   useEffect(() => {
     setVrmStatus("loading");
     setPosterFailed(false);
-    setViewIndex(0);
   }, [personaId, look.variantId]);
 
   const showPoster = vrmStatus === "error" && !posterFailed;
   const showErrorText = vrmStatus === "error" && posterFailed;
 
   return (
-    <div
-      className="absolute inset-0 bg-[#12121a]"
-      style={{ bottom: lift }}
-      onClick={() => setViewIndex((i) => (i + 1) % CHARACTER_VIEWS.length)}
-    >
+    <div className="absolute inset-0 bg-[#12121a]" style={{ bottom: lift }}>
       <VrmCanvas
         url={vrmUrl(personaId, look.variantId)}
         motionUrl={vrmaUrl(look.motionId)}
         expression={expression}
         talking={talking}
         reducedMotion={reducedMotion}
-        view={view}
+        orbitControlsRef={orbitControlsRef}
         onReady={() => setVrmStatus("ready")}
         onError={() => setVrmStatus("error")}
       />
@@ -87,6 +84,16 @@ export function CharacterStage({
         <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-[13px] text-white/50">
           読み込めませんでした
         </div>
+      )}
+      {vrmStatus === "ready" && (
+        <button
+          onClick={() => orbitControlsRef.current?.reset()}
+          className="absolute right-2 bottom-2 grid h-9 w-9 place-items-center rounded-full
+                     bg-black/45 text-[15px] text-white/85 backdrop-blur-[2px] active:scale-90"
+          aria-label="表示位置を戻す"
+        >
+          ↺
+        </button>
       )}
     </div>
   );
