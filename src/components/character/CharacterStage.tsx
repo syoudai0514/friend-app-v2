@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import type { Expression } from "@/lib/expressions";
 import type { Look } from "@/lib/types";
 import { posterUrl, vrmUrl } from "@/lib/vrm-assets";
+import { CHARACTER_VIEWS } from "./view";
 
 // three系はサイズが大きいので、クライアントでしか要らないWebGL部分だけ切り出して遅延読み込みする
 const VrmCanvas = dynamic(() => import("./VrmCanvas").then((m) => m.VrmCanvas), { ssr: false });
@@ -23,7 +24,10 @@ function usePrefersReducedMotion(): boolean {
 
 /**
  * 背景＋キャラの表示エリア。
- * フォールバックは VRM → poster画像 → 簡易エラー表示 の一直線
+ * フォールバックは VRM → poster画像 → 簡易エラー表示 の一直線。
+ * poster画像は読み込み中には出さない（VRMのメタ情報についている顔クローズアップの
+ * サムネイルを流用しているだけなので、全身が映るVRMに切り替わった瞬間サイズが
+ * 変わって見えてしまうため。VRMが失敗したときの最終手段としてのみ使う）
  */
 export function CharacterStage({
   look,
@@ -41,23 +45,31 @@ export function CharacterStage({
   const reducedMotion = usePrefersReducedMotion();
   const [vrmStatus, setVrmStatus] = useState<"loading" | "ready" | "error">("loading");
   const [posterFailed, setPosterFailed] = useState(false);
+  const [viewIndex, setViewIndex] = useState(0);
+  const view = CHARACTER_VIEWS[viewIndex];
 
-  // バリアントが変わったら読み込み状態をリセットする
+  // バリアントが変わったら読み込み状態と視点をリセットする
   useEffect(() => {
     setVrmStatus("loading");
     setPosterFailed(false);
+    setViewIndex(0);
   }, [personaId, look.variantId]);
 
-  const showPoster = vrmStatus !== "ready" && !posterFailed;
+  const showPoster = vrmStatus === "error" && !posterFailed;
   const showErrorText = vrmStatus === "error" && posterFailed;
 
   return (
-    <div className="absolute inset-0 bg-[#12121a]" style={{ bottom: lift }}>
+    <div
+      className="absolute inset-0 bg-[#12121a]"
+      style={{ bottom: lift }}
+      onClick={() => setViewIndex((i) => (i + 1) % CHARACTER_VIEWS.length)}
+    >
       <VrmCanvas
         url={vrmUrl(personaId, look.variantId)}
         expression={expression}
         talking={talking}
         reducedMotion={reducedMotion}
+        view={view}
         onReady={() => setVrmStatus("ready")}
         onError={() => setVrmStatus("error")}
       />

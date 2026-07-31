@@ -4,12 +4,14 @@ import { Canvas } from "@react-three/fiber";
 import { useState } from "react";
 import type { Expression } from "@/lib/expressions";
 import { VrmModel } from "./VrmModel";
+import type { CharacterView } from "./view";
 
 export function VrmCanvas({
   url,
   expression,
   talking,
   reducedMotion,
+  view,
   onReady,
   onError,
 }: {
@@ -17,6 +19,7 @@ export function VrmCanvas({
   expression: Expression;
   talking: boolean;
   reducedMotion: boolean;
+  view: CharacterView;
   onReady?: () => void;
   onError?: () => void;
 }) {
@@ -49,6 +52,7 @@ export function VrmCanvas({
         expression={expression}
         talking={talking}
         reducedMotion={reducedMotion}
+        view={view}
         onReady={onReady}
         onError={onError}
       />

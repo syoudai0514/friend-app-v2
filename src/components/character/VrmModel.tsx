@@ -3,8 +3,10 @@
 import { useEffect, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
+import type { VRMHumanBoneName } from "@pixiv/three-vrm";
 import { EXPRESSIONS, type Expression } from "@/lib/expressions";
 import { useVrm } from "./useVrm";
+import type { CharacterView } from "./view";
 
 /** 気分の表情プリセット。まばたき(blink*)や口の形(aa)とは別に、毎フレーム一度リセットしてから適用する */
 const MOOD_PRESETS = ["happy", "angry", "sad", "relaxed", "surprised", "neutral"];
@@ -14,8 +16,28 @@ const BLINK_MIN_MS = 2600;
 const BLINK_MAX_MS = 6200;
 const BLINK_CLOSE_MS = 130;
 
+/**
+ * 「気をつけ」の直立ではなく、少し甘えたような雰囲気にするための
+ * 姿勢の上乗せ（度数、モデル自身の基本姿勢に加算する）。
+ * 見え方はモデルのボーン構成次第で変わるので、実物を見ながら調整する前提の初期値
+ */
+const IDLE_POSE_OFFSET_DEG: Partial<Record<VRMHumanBoneName, [number, number, number]>> = {
+  head: [3, 6, 5],
+  neck: [2, 0, 2],
+  chest: [4, 0, 0],
+  leftUpperArm: [10, 0, -12],
+  rightUpperArm: [10, 0, 12],
+  leftLowerArm: [0, 0, -18],
+  rightLowerArm: [0, 0, 18],
+};
+
 function randomBetween(min: number, max: number): number {
   return min + Math.random() * (max - min);
+}
+
+/** 全身が収まるカメラ距離を、実際の身長(height)とカメラの垂直画角から逆算する */
+function fitDistance(visibleHeight: number, verticalFovRad: number): number {
+  return visibleHeight / 2 / Math.tan(verticalFovRad / 2);
 }
 
 export function VrmModel({
@@ -23,6 +45,7 @@ export function VrmModel({
   expression,
   talking,
   reducedMotion,
+  view,
   onReady,
   onError,
 }: {
@@ -30,6 +53,7 @@ export function VrmModel({
   expression: Expression;
   talking: boolean;
   reducedMotion: boolean;
+  view: CharacterView;
   onReady?: () => void;
   onError?: () => void;
 }) {
@@ -46,9 +70,32 @@ export function VrmModel({
     if (error) onError?.();
   }, [error, onError]);
 
-  // v1の立ち絵と同じく、頭からふくらはぎまで見える全身に近いサイズで映す。
-  // モデルごとの身長差を吸収するため、固定距離ではなく実際の全身の高さから
-  // カメラを引く距離を逆算する
+  // 「気をつけ」で立っているだけに見えないよう、腕・首・胸に軽く姿勢を足す。
+  // モデル自身の基本姿勢に対する上乗せ（差分）として掛けるので、
+  // 元のポーズがどんな角度で書き出されていても崩れにくい
+  useEffect(() => {
+    if (!vrm) return;
+    const humanoid = vrm.humanoid;
+    for (const [name, [x, y, z]] of Object.entries(IDLE_POSE_OFFSET_DEG) as [
+      VRMHumanBoneName,
+      [number, number, number],
+    ][]) {
+      const node = humanoid.getNormalizedBoneNode(name);
+      if (!node) continue;
+      const offset = new THREE.Quaternion().setFromEuler(
+        new THREE.Euler(
+          THREE.MathUtils.degToRad(x),
+          THREE.MathUtils.degToRad(y),
+          THREE.MathUtils.degToRad(z),
+        ),
+      );
+      node.quaternion.multiply(offset);
+    }
+  }, [vrm]);
+
+  // v1の立ち絵に近いサイズ感（全身〜ふくらはぎ）を基準に、タップで
+  // 見上げ／背面などの視点にも切り替えられるようにする。
+  // モデルごとの身長差を吸収するため、固定距離ではなく実際の全身の高さから逆算する
   useEffect(() => {
     if (!vrm) return;
     vrm.scene.updateMatrixWorld(true);
@@ -58,19 +105,29 @@ export function VrmModel({
 
     const centerX = (box.min.x + box.max.x) / 2;
     const centerZ = (box.min.z + box.max.z) / 2;
-    // 頭上に少し余白を残しつつ、足首より少し上までを画面に収める
+    const perspective = camera as THREE.PerspectiveCamera;
+    const vFov = THREE.MathUtils.degToRad(perspective.fov);
+
+    if (view === "low") {
+      // 足元近くから、顔のあたりを見上げる
+      const lookY = box.min.y + height * 0.82;
+      const distance = fitDistance(height * 0.62, vFov);
+      camera.position.set(centerX, box.min.y + height * 0.04, centerZ + distance * 0.8);
+      camera.lookAt(centerX, lookY, centerZ);
+      return;
+    }
+
+    // front（全身）・back（背面）は同じ画角で、Zの正負だけを反転させる
     const visibleTop = box.max.y + height * 0.06;
     const visibleBottom = box.min.y + height * 0.06;
     const visibleHeight = visibleTop - visibleBottom;
     const lookY = (visibleTop + visibleBottom) / 2;
+    const distance = fitDistance(visibleHeight, vFov);
+    const side = view === "back" ? -1 : 1;
 
-    const perspective = camera as THREE.PerspectiveCamera;
-    const vFov = THREE.MathUtils.degToRad(perspective.fov);
-    const distance = visibleHeight / 2 / Math.tan(vFov / 2);
-
-    camera.position.set(centerX, lookY, centerZ + distance);
+    camera.position.set(centerX, lookY, centerZ + distance * side);
     camera.lookAt(centerX, lookY, centerZ);
-  }, [vrm, camera]);
+  }, [vrm, camera, view]);
 
   useFrame((state, delta) => {
     if (!vrm) return;

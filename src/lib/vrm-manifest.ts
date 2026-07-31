@@ -14,12 +14,12 @@ export const VRM_MANIFEST: Record<string, PartOption[]> = {
     },
     {
       "id": "shirt",
-      "name": "シャツ",
+      "name": "腰巻きギャル",
       "rarity": "NR"
     },
     {
       "id": "swimsuit",
-      "name": "水着",
+      "name": "ドレス",
       "rarity": "NR"
     }
   ]

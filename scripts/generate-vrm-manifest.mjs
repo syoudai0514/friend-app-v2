@@ -23,8 +23,8 @@ const OUT_FILE = path.join(ROOT, "src", "lib", "vrm-manifest.ts");
  */
 const DISPLAY_NAMES = {
   aimi: {
-    swimsuit: "水着",
-    shirt: "シャツ",
+    swimsuit: "ドレス",
+    shirt: "腰巻きギャル",
     knit: "オフショルニット",
   },
 };
