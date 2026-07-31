@@ -60,7 +60,11 @@ export function VrmCanvas({
         onReady={onReady}
         onError={onError}
       />
-      {/* 1本指ドラッグ=回り込み、2本指ピンチ=ズーム、2本指ドラッグ=位置ずらし（既定の割り当て） */}
+      {/*
+        1本指ドラッグ=回り込み、2本指ピンチ=ズーム、2本指ドラッグ=位置ずらし（既定の割り当て）。
+        真下から見上げるとスカートの中など見せたくないものが見えてしまうため、
+        見上げは「顔を少し見上げる」程度までに制限し、真下には回り込めないようにする
+      */}
       <OrbitControls
         ref={orbitControlsRef}
         enableDamping
@@ -68,7 +72,7 @@ export function VrmCanvas({
         minDistance={0.15}
         maxDistance={8}
         minPolarAngle={0.05}
-        maxPolarAngle={Math.PI - 0.05}
+        maxPolarAngle={Math.PI * 0.68}
       />
     </Canvas>
   );
