@@ -26,7 +26,7 @@ export const SCENE: PartOption[] = [
 export const MOTION: PartOption[] = [{ id: "idle", name: "たちポーズ", rarity: "NR" }];
 
 export const DEFAULT_LOOK: Look = {
-  variantId: "default",
+  variantId: "swimsuit",
   scene: "poolside",
   motionId: "idle",
 };

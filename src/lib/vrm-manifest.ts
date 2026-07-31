@@ -5,7 +5,20 @@ import type { PartOption } from "./types";
  * このファイルは自動生成されています。直接編集しないでください。
  * 生成元: scripts/generate-vrm-manifest.mjs（npm run dev / build の前に走ります）
  */
-export const VRM_MANIFEST: Record<string, PartOption[]> = {};
+export const VRM_MANIFEST: Record<string, PartOption[]> = {
+  "aimi": [
+    {
+      "id": "shirt",
+      "name": "shirt",
+      "rarity": "NR"
+    },
+    {
+      "id": "swimsuit",
+      "name": "swimsuit",
+      "rarity": "NR"
+    }
+  ]
+};
 
 /**
  * 指定キャラのバリアント一覧。まだ1つもVRMを置いていないキャラでは、

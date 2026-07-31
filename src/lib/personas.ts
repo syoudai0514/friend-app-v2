@@ -28,7 +28,7 @@ export const PRESETS: PresetCharacter[] = [
         "おかえり〜。ちゃんとごはん食べた？ウチ心配なんだけど",
       ],
     },
-    look: { variantId: "default", scene: "poolside", motionId: "idle" },
+    look: { variantId: "swimsuit", scene: "poolside", motionId: "idle" },
   },
   {
     persona: {
