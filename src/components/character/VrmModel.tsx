@@ -3,7 +3,6 @@
 import { useEffect, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import type { VRMHumanBoneName } from "@pixiv/three-vrm";
 import { EXPRESSIONS, type Expression } from "@/lib/expressions";
 import { useVrm } from "./useVrm";
 import type { CharacterView } from "./view";
@@ -15,21 +14,6 @@ const MOOD_PRESETS = ["happy", "angry", "sad", "relaxed", "surprised", "neutral"
 const BLINK_MIN_MS = 2600;
 const BLINK_MAX_MS = 6200;
 const BLINK_CLOSE_MS = 130;
-
-/**
- * 「気をつけ」の直立ではなく、少し甘えたような雰囲気にするための
- * 姿勢の上乗せ（度数、モデル自身の基本姿勢に加算する）。
- * 見え方はモデルのボーン構成次第で変わるので、実物を見ながら調整する前提の初期値
- */
-const IDLE_POSE_OFFSET_DEG: Partial<Record<VRMHumanBoneName, [number, number, number]>> = {
-  head: [3, 6, 5],
-  neck: [2, 0, 2],
-  chest: [4, 0, 0],
-  leftUpperArm: [10, 0, -12],
-  rightUpperArm: [10, 0, 12],
-  leftLowerArm: [0, 0, -18],
-  rightLowerArm: [0, 0, 18],
-};
 
 function randomBetween(min: number, max: number): number {
   return min + Math.random() * (max - min);
@@ -69,29 +53,6 @@ export function VrmModel({
   useEffect(() => {
     if (error) onError?.();
   }, [error, onError]);
-
-  // 「気をつけ」で立っているだけに見えないよう、腕・首・胸に軽く姿勢を足す。
-  // モデル自身の基本姿勢に対する上乗せ（差分）として掛けるので、
-  // 元のポーズがどんな角度で書き出されていても崩れにくい
-  useEffect(() => {
-    if (!vrm) return;
-    const humanoid = vrm.humanoid;
-    for (const [name, [x, y, z]] of Object.entries(IDLE_POSE_OFFSET_DEG) as [
-      VRMHumanBoneName,
-      [number, number, number],
-    ][]) {
-      const node = humanoid.getNormalizedBoneNode(name);
-      if (!node) continue;
-      const offset = new THREE.Quaternion().setFromEuler(
-        new THREE.Euler(
-          THREE.MathUtils.degToRad(x),
-          THREE.MathUtils.degToRad(y),
-          THREE.MathUtils.degToRad(z),
-        ),
-      );
-      node.quaternion.multiply(offset);
-    }
-  }, [vrm]);
 
   // v1の立ち絵に近いサイズ感（全身〜ふくらはぎ）を基準に、タップで
   // 見上げ／背面などの視点にも切り替えられるようにする。
