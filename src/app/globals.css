@@ -1,0 +1,253 @@
+@import "tailwindcss";
+
+@theme {
+  --color-pink-cta: #ff6f9c;
+  --color-pink-cta-deep: #f0447c;
+  --color-blue-menu: #3fa9f5;
+  --color-blue-menu-deep: #2a8ed6;
+}
+
+html,
+body {
+  height: 100%;
+  overscroll-behavior: none;
+}
+
+body {
+  margin: 0;
+  background: #0b0b0f;
+  color: #2b2b33;
+  font-family:
+    "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic",
+    Meiryo, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* PWAとしてホーム画面から開いたとき、ノッチ/ステータスバーの下に
+   ボタンが隠れて押せなくなるのを防ぐ。数値のiPhone実機分は最低でも確保する */
+.safe-top {
+  padding-top: max(0.75rem, env(safe-area-inset-top));
+}
+
+/* 右側の縦メニューは上部バーのすぐ下に来る想定の固定値だったので、
+   上部バーが safe-top ぶん下がったのに合わせて同じだけ下げる */
+.safe-side-menu {
+  top: calc(max(0.75rem, env(safe-area-inset-top)) + 3.25rem);
+}
+
+/* トーク画面の会話ログも、上部バーの高さに合わせて開始位置を下げる */
+.safe-chat-log {
+  top: calc(max(0.75rem, env(safe-area-inset-top)) + 3.5rem);
+}
+
+/* ---------------------------------------------------------------- */
+/*  参考アプリ風のパーツ                                             */
+/* ---------------------------------------------------------------- */
+
+/* 右側の丸いメニューボタン */
+.menu-btn {
+  @apply flex h-[52px] w-[52px] flex-col items-center justify-center rounded-full
+         bg-white/95 text-[8.5px] font-bold text-[#3a3f52] shadow-[0_2px_8px_rgba(0,0,0,.28)]
+         transition active:scale-90;
+}
+
+.menu-btn-accent {
+  @apply bg-blue-menu text-white;
+}
+
+/* 大きいピンクのCTA */
+.cta {
+  @apply w-full rounded-full bg-gradient-to-b from-[#ff8fb2] to-pink-cta-deep
+         py-3.5 text-center text-[16px] font-bold text-white
+         shadow-[0_4px_14px_rgba(240,68,124,.45)] transition
+         active:translate-y-[1px] active:shadow-[0_2px_8px_rgba(240,68,124,.4)]
+         disabled:opacity-50;
+}
+
+/* セリフの吹き出し。
+   下地を透かして脚が見えるように、白は薄めにしてぼかしで文字を守る */
+.bubble {
+  @apply rounded-[20px] bg-white/68 px-3.5 py-2.5 text-[13.5px] leading-[1.55] text-[#2b2b33]
+         shadow-[0_4px_16px_rgba(0,0,0,.16)] backdrop-blur-[7px];
+}
+
+/* キャラ名タグ */
+.name-tag {
+  @apply inline-flex items-center gap-1 rounded-full bg-gradient-to-b from-[#ff8fb2] to-pink-cta
+         px-3.5 py-0.5 text-[12px] font-bold text-white shadow-[0_2px_6px_rgba(0,0,0,.25)];
+}
+
+/* レアリティのバッジ */
+.rarity-SSR {
+  background: linear-gradient(90deg, #ff7ac4, #7ad2ff, #b58cff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+.rarity-SR {
+  color: #f59331;
+}
+.rarity-NR {
+  color: #4aa3e8;
+}
+
+/* 上部の丸いカウンター */
+.counter-pill {
+  @apply flex items-center gap-1.5 rounded-full bg-black/45 py-1 pr-3 pl-1
+         text-[13px] font-bold text-white backdrop-blur-[2px];
+}
+
+/* スクロールバーを隠す（スマホアプリっぽさのため） */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* セリフのふわっとした出現 */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-rise {
+  animation: rise 0.32s ease-out;
+}
+
+/* ---------------------------------------------------------------- */
+/*  表情の記号                                                        */
+/*  立ち絵の揺れ・呼吸・表情ごとの動きはuseFrame（Phase 1〜）へ移行した */
+/* ---------------------------------------------------------------- */
+
+.fx-blush {
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse,
+    rgba(255, 105, 145, 0.62) 0%,
+    rgba(255, 120, 155, 0.34) 55%,
+    rgba(255, 120, 155, 0) 100%
+  );
+  animation: fxFade 0.4s ease-out;
+}
+.fx-blush-soft {
+  opacity: 0.55;
+}
+.fx-blush-lines {
+  animation: fxFade 0.5s ease-out;
+}
+
+.fx-steam {
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.85) 0%, rgba(255, 255, 255, 0) 70%);
+  animation: fxSteam 1.7s ease-out infinite;
+}
+
+.fx-note {
+  color: #ff7fae;
+  font-weight: 700;
+  text-shadow: 0 2px 5px rgba(0, 0, 0, 0.25);
+  animation: fxFloat 1.9s ease-out infinite;
+}
+
+.fx-gloom {
+  background: linear-gradient(
+    to bottom,
+    rgba(86, 112, 168, 0.55) 0%,
+    rgba(86, 112, 168, 0.28) 55%,
+    rgba(86, 112, 168, 0) 100%
+  );
+  animation: fxFade 0.6s ease-out;
+}
+
+.fx-bang {
+  color: #ffd45e;
+  font-weight: 800;
+  line-height: 1;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  animation: fxPop 0.45s cubic-bezier(0.2, 1.5, 0.4, 1);
+}
+
+.fx-zzz {
+  color: #bcd4f5;
+  font-weight: 700;
+  text-shadow: 0 2px 5px rgba(0, 0, 0, 0.25);
+  animation: fxFloat 2.6s ease-out infinite;
+}
+
+@keyframes fxFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes fxFloat {
+  0% { opacity: 0; transform: translate(-50%, -50%) translateY(0) rotate(-8deg); }
+  25% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -50%) translateY(-260%) rotate(10deg); }
+}
+@keyframes fxSteam {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+  30% { opacity: 0.9; }
+  100% { opacity: 0; transform: translate(-50%, -50%) translateY(-180%) scale(1.5); }
+}
+@keyframes fxTwinkle {
+  0%, 100% { opacity: 0.2; transform: translate(-50%, -50%) scale(0.7) rotate(0deg); }
+  50% { opacity: 1; transform: translate(-50%, -50%) scale(1.1) rotate(35deg); }
+}
+@keyframes fxTear {
+  0% { opacity: 0; transform: translate(-50%, -50%) translateY(0) scale(0.7); }
+  20% { opacity: 1; transform: translate(-50%, -50%) translateY(0) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -50%) translateY(220%) scale(0.9); }
+}
+@keyframes fxThrob {
+  0%, 100% { transform: translate(-50%, -50%) scale(1); }
+  50% { transform: translate(-50%, -50%) scale(1.18); }
+}
+@keyframes fxBurst {
+  from { opacity: 1; transform: translate(-50%, -50%) scale(0.5); }
+  to { opacity: 0; transform: translate(-50%, -50%) scale(1.35); }
+}
+@keyframes fxPop {
+  from { transform: translate(-50%, -50%) scale(0.3); }
+  to { transform: translate(-50%, -50%) scale(1); }
+}
+
+/* 動きを控えたい設定のときは止める */
+@media (prefers-reduced-motion: reduce) {
+  .fx-note,
+  .fx-zzz,
+  .fx-steam,
+  .fx-bang {
+    animation: none;
+  }
+}
+
+/* 「考え中」の三点リーダー */
+@keyframes blink {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+.dot {
+  animation: blink 1.2s infinite;
+}
+.dot:nth-child(2) {
+  animation-delay: 0.18s;
+}
+.dot:nth-child(3) {
+  animation-delay: 0.36s;
+}
