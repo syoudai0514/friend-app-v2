@@ -17,6 +17,18 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PUBLIC_DIR = path.join(ROOT, "public");
 const OUT_FILE = path.join(ROOT, "src", "lib", "vrm-manifest.ts");
 
+/**
+ * クローゼットに出す表示名。ファイル名（variantId）とは別に、
+ * 見せたい名前をここで上書きできる。無ければファイル名をそのまま使う
+ */
+const DISPLAY_NAMES = {
+  aimi: {
+    swimsuit: "水着",
+    shirt: "シャツ",
+    knit: "オフショルニット",
+  },
+};
+
 async function variantIdsIn(personaId) {
   try {
     const entries = await readdir(path.join(PUBLIC_DIR, "vrm", personaId), { withFileTypes: true });
@@ -44,7 +56,8 @@ async function build() {
     if (!dir.isDirectory()) continue;
     const variantIds = await variantIdsIn(dir.name);
     if (variantIds.length === 0) continue;
-    manifest[dir.name] = variantIds.map((id) => ({ id, name: id, rarity: "NR" }));
+    const names = DISPLAY_NAMES[dir.name] ?? {};
+    manifest[dir.name] = variantIds.map((id) => ({ id, name: names[id] ?? id, rarity: "NR" }));
   }
 
   return manifest;

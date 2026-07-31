@@ -8,13 +8,18 @@ import type { PartOption } from "./types";
 export const VRM_MANIFEST: Record<string, PartOption[]> = {
   "aimi": [
     {
+      "id": "knit",
+      "name": "オフショルニット",
+      "rarity": "NR"
+    },
+    {
       "id": "shirt",
-      "name": "shirt",
+      "name": "シャツ",
       "rarity": "NR"
     },
     {
       "id": "swimsuit",
-      "name": "swimsuit",
+      "name": "水着",
       "rarity": "NR"
     }
   ]
