@@ -54,6 +54,20 @@ export function VrmModel({
     if (error) onError?.();
   }, [error, onError]);
 
+  // VRMは何もしないとT-pose（腕を真横に伸ばした基本姿勢）のままなので、
+  // 自然に立った姿に見えるよう腕を下ろす。normalizedボーンは
+  // 「回転0 = T-pose」という決まった基準で作られているため、
+  // 前回のような差分ではなく絶対角度で指定する
+  useEffect(() => {
+    if (!vrm) return;
+    const humanoid = vrm.humanoid;
+    const armDown = Math.PI * 0.42;
+    const leftUpperArm = humanoid.getNormalizedBoneNode("leftUpperArm");
+    const rightUpperArm = humanoid.getNormalizedBoneNode("rightUpperArm");
+    if (leftUpperArm) leftUpperArm.rotation.z = armDown;
+    if (rightUpperArm) rightUpperArm.rotation.z = -armDown;
+  }, [vrm]);
+
   // v1の立ち絵に近いサイズ感（全身〜ふくらはぎ）を基準に、タップで
   // 見上げ／背面などの視点にも切り替えられるようにする。
   // モデルごとの身長差を吸収するため、固定距離ではなく実際の全身の高さから逆算する
