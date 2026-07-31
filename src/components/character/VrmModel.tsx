@@ -46,16 +46,30 @@ export function VrmModel({
     if (error) onError?.();
   }, [error, onError]);
 
-  // 胸から上のバストアップになるよう、頭の位置を基準にカメラを合わせる。
-  // モデルごとの身長差を吸収するため、固定座標ではなく頭のワールド座標から決める
+  // v1の立ち絵と同じく、頭からふくらはぎまで見える全身に近いサイズで映す。
+  // モデルごとの身長差を吸収するため、固定距離ではなく実際の全身の高さから
+  // カメラを引く距離を逆算する
   useEffect(() => {
     if (!vrm) return;
-    const head = vrm.humanoid.getNormalizedBoneNode("head");
-    if (!head) return;
-    const headPos = new THREE.Vector3();
-    head.getWorldPosition(headPos);
-    camera.position.set(headPos.x, headPos.y - 0.12, headPos.z + 0.62);
-    camera.lookAt(headPos.x, headPos.y - 0.06, headPos.z);
+    vrm.scene.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(vrm.scene);
+    const height = box.max.y - box.min.y;
+    if (!Number.isFinite(height) || height <= 0) return;
+
+    const centerX = (box.min.x + box.max.x) / 2;
+    const centerZ = (box.min.z + box.max.z) / 2;
+    // 頭上に少し余白を残しつつ、足首より少し上までを画面に収める
+    const visibleTop = box.max.y + height * 0.06;
+    const visibleBottom = box.min.y + height * 0.06;
+    const visibleHeight = visibleTop - visibleBottom;
+    const lookY = (visibleTop + visibleBottom) / 2;
+
+    const perspective = camera as THREE.PerspectiveCamera;
+    const vFov = THREE.MathUtils.degToRad(perspective.fov);
+    const distance = visibleHeight / 2 / Math.tan(vFov / 2);
+
+    camera.position.set(centerX, lookY, centerZ + distance);
+    camera.lookAt(centerX, lookY, centerZ);
   }, [vrm, camera]);
 
   useFrame((state, delta) => {
