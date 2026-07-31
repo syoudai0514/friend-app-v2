@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import type { Expression } from "@/lib/expressions";
 import type { Look } from "@/lib/types";
-import { posterUrl, vrmUrl } from "@/lib/vrm-assets";
+import { posterUrl, vrmaUrl, vrmUrl } from "@/lib/vrm-assets";
 import { CHARACTER_VIEWS } from "./view";
 
 // three系はサイズが大きいので、クライアントでしか要らないWebGL部分だけ切り出して遅延読み込みする
@@ -66,6 +66,7 @@ export function CharacterStage({
     >
       <VrmCanvas
         url={vrmUrl(personaId, look.variantId)}
+        motionUrl={vrmaUrl(look.motionId)}
         expression={expression}
         talking={talking}
         reducedMotion={reducedMotion}

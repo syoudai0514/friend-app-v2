@@ -3,8 +3,10 @@
 import { useEffect, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
+import { createVRMAnimationClip } from "@pixiv/three-vrm-animation";
 import { EXPRESSIONS, type Expression } from "@/lib/expressions";
 import { useVrm } from "./useVrm";
+import { useVrma } from "./useVrma";
 import type { CharacterView } from "./view";
 
 /** 気分の表情プリセット。まばたき(blink*)や口の形(aa)とは別に、毎フレーム一度リセットしてから適用する */
@@ -26,6 +28,7 @@ function fitDistance(visibleHeight: number, verticalFovRad: number): number {
 
 export function VrmModel({
   url,
+  motionUrl,
   expression,
   talking,
   reducedMotion,
@@ -34,6 +37,7 @@ export function VrmModel({
   onError,
 }: {
   url: string;
+  motionUrl: string;
   expression: Expression;
   talking: boolean;
   reducedMotion: boolean;
@@ -42,9 +46,11 @@ export function VrmModel({
   onError?: () => void;
 }) {
   const { vrm, error } = useVrm(url);
+  const { vrmAnimation } = useVrma(motionUrl);
   const { camera } = useThree();
   const blink = useRef({ nextAt: 0, closingUntil: 0 });
   const talkClock = useRef(0);
+  const mixer = useRef<THREE.AnimationMixer | null>(null);
 
   useEffect(() => {
     if (vrm) onReady?.();
@@ -67,6 +73,23 @@ export function VrmModel({
     if (leftUpperArm) leftUpperArm.rotation.z = armDown;
     if (rightUpperArm) rightUpperArm.rotation.z = -armDown;
   }, [vrm]);
+
+  // モーション(VRMA)が読めたら再生する。読めなかった・まだ無いモーションIDのときは
+  // 上のarmDownによる静止ポーズのままになる
+  useEffect(() => {
+    if (!vrm || !vrmAnimation) {
+      mixer.current = null;
+      return;
+    }
+    const clip = createVRMAnimationClip(vrmAnimation, vrm);
+    const m = new THREE.AnimationMixer(vrm.scene);
+    m.clipAction(clip).setLoop(THREE.LoopRepeat, Infinity).play();
+    mixer.current = m;
+    return () => {
+      m.stopAllAction();
+      mixer.current = null;
+    };
+  }, [vrm, vrmAnimation]);
 
   // v1の立ち絵に近いサイズ感（全身〜ふくらはぎ）を基準に、タップで
   // 見上げ／背面などの視点にも切り替えられるようにする。
@@ -106,6 +129,12 @@ export function VrmModel({
 
   useFrame((state, delta) => {
     if (!vrm) return;
+
+    if (mixer.current) {
+      // 視差効果を減らす設定のときはモーションも止める（姿勢はそのまま維持）
+      mixer.current.timeScale = reducedMotion ? 0 : 1;
+      mixer.current.update(delta);
+    }
     vrm.update(delta);
 
     const expr = vrm.expressionManager;

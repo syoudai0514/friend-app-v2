@@ -8,6 +8,7 @@ import type { CharacterView } from "./view";
 
 export function VrmCanvas({
   url,
+  motionUrl,
   expression,
   talking,
   reducedMotion,
@@ -16,6 +17,7 @@ export function VrmCanvas({
   onError,
 }: {
   url: string;
+  motionUrl: string;
   expression: Expression;
   talking: boolean;
   reducedMotion: boolean;
@@ -49,6 +51,7 @@ export function VrmCanvas({
       <directionalLight position={[0.5, 1, 0.8]} intensity={0.55} />
       <VrmModel
         url={url}
+        motionUrl={motionUrl}
         expression={expression}
         talking={talking}
         reducedMotion={reducedMotion}
