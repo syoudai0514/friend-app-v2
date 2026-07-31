@@ -19,11 +19,14 @@ export const SCENE: PartOption[] = [
 
 /* -------------------------------------------------------------------------- */
 /*  モーション                                                                 */
-/*  実体（VRMAファイル）は Phase 3 で public/vrma/ に追加していく。            */
+/*  実体（VRMAファイル）は public/vrma/<motionId>.vrma に置く。               */
 /*  ここには選択肢としての一覧だけを持つ                                       */
 /* -------------------------------------------------------------------------- */
 
-export const MOTION: PartOption[] = [{ id: "idle", name: "たちポーズ", rarity: "NR" }];
+export const MOTION: PartOption[] = [
+  { id: "idle", name: "たちポーズ", rarity: "NR" },
+  { id: "kiss", name: "投げキッス", rarity: "SR" },
+];
 
 export const DEFAULT_LOOK: Look = {
   variantId: "swimsuit",
