@@ -84,8 +84,16 @@ export function VrmModel({
     const clip = createVRMAnimationClip(vrmAnimation, vrm);
     const m = new THREE.AnimationMixer(vrm.scene);
     m.clipAction(clip).setLoop(THREE.LoopRepeat, Infinity).play();
+
+    // ループの継ぎ目でポーズが不連続に飛ぶと、髪などのスプリングボーン物理が
+    // その勢いを拾って一瞬暴れることがある。ループのたびに物理状態を
+    // 今の姿勢でリセットして、暴れを引きずらないようにする
+    const onLoop = () => vrm.springBoneManager?.reset();
+    m.addEventListener("loop", onLoop);
+
     mixer.current = m;
     return () => {
+      m.removeEventListener("loop", onLoop);
       m.stopAllAction();
       mixer.current = null;
     };
