@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { VRM, VRMLoaderPlugin, VRMUtils } from "@pixiv/three-vrm";
 
@@ -47,6 +48,17 @@ export function useVrm(url: string | null): UseVrmResult {
         }
         VRMUtils.removeUnnecessaryVertices(gltf.scene);
         VRMUtils.removeUnnecessaryJoints(gltf.scene);
+
+        // 髪や顔などVRoid書き出しの片面描画パーツは、自由に回せるカメラだと
+        // 裏側に回り込んだ瞬間に消えて見える。両面描画にして裏側でも表示されるようにする
+        gltf.scene.traverse((obj) => {
+          if (!(obj instanceof THREE.Mesh)) return;
+          const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+          for (const mat of materials) {
+            mat.side = THREE.DoubleSide;
+          }
+        });
+
         setVrm(loaded);
         setLoading(false);
       },
