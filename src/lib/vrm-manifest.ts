@@ -22,6 +22,13 @@ export const VRM_MANIFEST: Record<string, PartOption[]> = {
       "name": "ドレス",
       "rarity": "NR"
     }
+  ],
+  "shizuku": [
+    {
+      "id": "casual",
+      "name": "私服",
+      "rarity": "NR"
+    }
   ]
 };
 

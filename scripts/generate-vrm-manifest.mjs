@@ -27,6 +27,9 @@ const DISPLAY_NAMES = {
     shirt: "腰巻きギャル",
     knit: "オフショルニット",
   },
+  shizuku: {
+    casual: "私服",
+  },
 };
 
 async function variantIdsIn(personaId) {

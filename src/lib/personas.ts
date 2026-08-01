@@ -48,7 +48,7 @@ export const PRESETS: PresetCharacter[] = [
         "{user}の声を聞くと、わたしまで落ち着いてしまいます",
       ],
     },
-    look: { variantId: "default", scene: "washitsu", motionId: "idle" },
+    look: { variantId: "casual", scene: "washitsu", motionId: "idle" },
   },
   {
     persona: {
