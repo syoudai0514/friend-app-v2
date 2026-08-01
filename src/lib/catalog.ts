@@ -29,6 +29,7 @@ export const MOTION: PartOption[] = [
   { id: "kiss", name: "投げキッス", rarity: "SR" },
   { id: "kick", name: "ハイキック", rarity: "SR" },
   { id: "situp", name: "腹筋", rarity: "SR" },
+  { id: "squat", name: "スクワット", rarity: "SR" },
 ];
 
 export const DEFAULT_LOOK: Look = {
