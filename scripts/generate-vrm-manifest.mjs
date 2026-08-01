@@ -29,6 +29,7 @@ const DISPLAY_NAMES = {
   },
   shizuku: {
     casual: "私服",
+    leather: "黒レザードレス",
   },
 };
 
