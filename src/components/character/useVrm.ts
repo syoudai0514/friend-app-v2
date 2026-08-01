@@ -50,11 +50,15 @@ export function useVrm(url: string | null): UseVrmResult {
         VRMUtils.removeUnnecessaryJoints(gltf.scene);
 
         // 髪や顔などVRoid書き出しの片面描画パーツは、自由に回せるカメラだと
-        // 裏側に回り込んだ瞬間に消えて見える。両面描画にして裏側でも表示されるようにする
+        // 裏側に回り込んだ瞬間に消えて見える。両面描画にして裏側でも表示されるようにする。
+        // ただしMToonの輪郭線専用マテリアル（isOutline）は意図的に裏面だけを
+        // 描画する設定になっているため対象から外す（両面にすると輪郭線の色で
+        // 全身が覆われてしまう）
         gltf.scene.traverse((obj) => {
           if (!(obj instanceof THREE.Mesh)) return;
           const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
           for (const mat of materials) {
+            if ((mat as { isOutline?: boolean }).isOutline) continue;
             mat.side = THREE.DoubleSide;
           }
         });
