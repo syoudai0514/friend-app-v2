@@ -184,7 +184,9 @@ export function VrmCanvas({
   // WebGL context lost（バックグラウンド復帰時など）が起きたら、
   // Canvasごと作り直してレンダラーを立て直す
   const [canvasKey, setCanvasKey] = useState(0);
-  const minCameraDistance = motionUrl.endsWith("/situp.vrma") ? 2.4 : 0.18;
+  // 注視点を2本指で移動しても、実際の頭との衝突判定はVrmModel側で行う。
+  // OrbitControls側は操作感を損なわない最低限のズーム制限だけにする。
+  const minCameraDistance = 0.18;
   const rememberView = useCallback(() => {
     const controls = orbitControlsRef.current;
     if (!controls || !onViewChange) return;
@@ -250,8 +252,7 @@ export function VrmCanvas({
         onChange={rememberView}
         enableDamping
         dampingFactor={0.15}
-        // 腹筋は頭が大きく手前へ動くため、顔の内側へ入らない距離で止める。
-        // それ以外は従来どおり近くまで寄れる。
+        // 実際の頭との距離は、モーションと位置ずらしを反映したあとに別途保護する。
         minDistance={minCameraDistance}
         maxDistance={8}
         minPolarAngle={0.05}
