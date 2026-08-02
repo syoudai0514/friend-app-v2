@@ -15,6 +15,7 @@ function AppearanceLayers({
   irisTextureUrl,
   browsTextureUrl,
   mouthTextureUrl,
+  bodySkinColor,
   motionUrl,
   expression,
   talking,
@@ -30,6 +31,7 @@ function AppearanceLayers({
   irisTextureUrl: string | null;
   browsTextureUrl: string | null;
   mouthTextureUrl: string | null;
+  bodySkinColor: string | null;
   motionUrl: string;
   expression: Expression;
   talking: boolean;
@@ -83,6 +85,7 @@ function AppearanceLayers({
         irisTextureUrl={irisTextureUrl}
         browsTextureUrl={browsTextureUrl}
         mouthTextureUrl={mouthTextureUrl}
+        bodySkinColor={hasOutfit && outfitReady ? bodySkinColor : null}
         syncMotion={hasOutfit || hasHair}
         onMeasured={onBaseBounds}
         onReady={onReady}
@@ -136,6 +139,7 @@ export function VrmCanvas({
   irisTextureUrl = null,
   browsTextureUrl = null,
   mouthTextureUrl = null,
+  bodySkinColor = null,
   motionUrl,
   expression,
   talking,
@@ -151,6 +155,7 @@ export function VrmCanvas({
   irisTextureUrl?: string | null;
   browsTextureUrl?: string | null;
   mouthTextureUrl?: string | null;
+  bodySkinColor?: string | null;
   motionUrl: string;
   expression: Expression;
   talking: boolean;
@@ -192,6 +197,7 @@ export function VrmCanvas({
         irisTextureUrl={irisTextureUrl}
         browsTextureUrl={browsTextureUrl}
         mouthTextureUrl={mouthTextureUrl}
+        bodySkinColor={bodySkinColor}
         motionUrl={motionUrl}
         expression={expression}
         talking={talking}

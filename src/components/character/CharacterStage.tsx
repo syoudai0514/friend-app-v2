@@ -10,6 +10,11 @@ import { posterUrl, vrmaUrl, vrmUrl } from "@/lib/vrm-assets";
 // three系はサイズが大きいので、クライアントでしか要らないWebGL部分だけ切り出して遅延読み込みする
 const VrmCanvas = dynamic(() => import("./VrmCanvas").then((m) => m.VrmCanvas), { ssr: false });
 
+const BODY_SKIN_COLORS: Record<string, string> = {
+  aimi: "#f9e7d9",
+  shizuku: "#e2c29f",
+};
+
 function usePrefersReducedMotion(): boolean {
   const [reduced, setReduced] = useState(false);
   useEffect(() => {
@@ -65,10 +70,15 @@ export function CharacterStage({
 
   const showPoster = vrmStatus === "error" && !posterFailed;
   const showErrorText = vrmStatus === "error" && posterFailed;
-  // しずくの私服はアイミーより胸まわりが薄い体型に合わせて作られている。
-  // キャラ間試着のときだけ前後へ少し膨らませ、首元から肌が突き抜けるのを抑える。
-  const outfitDepthScale =
-    look.outfit?.personaId === "shizuku" && look.outfit.variantId === "casual" ? 1.1 : 1;
+  const isBorrowedOutfit = Boolean(
+    look.outfit &&
+      (look.outfit.personaId !== personaId || look.outfit.variantId !== look.variantId),
+  );
+  // しずくの私服は胸まわりが薄い体型に合わせて作られているため、別バリアントへ
+  // 着せる場合だけ前後へ少し余裕を持たせ、モーション中の突き抜けを抑える。
+  const isShizukuCasual =
+    look.outfit?.personaId === "shizuku" && look.outfit.variantId === "casual";
+  const outfitDepthScale = isShizukuCasual && isBorrowedOutfit ? 1.14 : 1;
 
   return (
     <div className="absolute inset-0 bg-[#12121a]" style={{ bottom: lift }}>
@@ -86,6 +96,7 @@ export function CharacterStage({
         mouthTextureUrl={
           look.mouth ? `/face-parts/${look.mouth.personaId}/mouth.png` : null
         }
+        bodySkinColor={isBorrowedOutfit ? (BODY_SKIN_COLORS[personaId] ?? "#e6c8aa") : null}
         motionUrl={vrmaUrl(look.motionId)}
         expression={expression}
         talking={talking}
