@@ -54,7 +54,14 @@ function migrateLook(saved: unknown): Look {
 
 function reconcileLook(saved: unknown, schemaVersion: number): Look {
   if (schemaVersion < 2) return migrateLook(saved);
-  return { ...DEFAULT_LOOK, ...((saved ?? {}) as Partial<Look>) };
+  const raw = (saved ?? {}) as Partial<Look>;
+  const outfit =
+    raw.outfit &&
+    typeof raw.outfit.personaId === "string" &&
+    typeof raw.outfit.variantId === "string"
+      ? { personaId: raw.outfit.personaId, variantId: raw.outfit.variantId }
+      : null;
+  return { ...DEFAULT_LOOK, ...raw, outfit };
 }
 
 /** 保存済みキャラ1件分。壊れていたら null を返し、丸ごと読み飛ばせるようにする */

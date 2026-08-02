@@ -5,9 +5,10 @@ import { useMemo, useState } from "react";
 import { CharacterStage } from "@/components/character/CharacterStage";
 import { RarityBadge } from "@/components/ui";
 import { MOTION, SCENE } from "@/lib/catalog";
+import { PRESETS } from "@/lib/personas";
 import { useStore } from "@/lib/store";
-import type { Look, PartOption } from "@/lib/types";
-import { variantsFor } from "@/lib/vrm-manifest";
+import type { Look, OutfitRef, PartOption } from "@/lib/types";
+import { variantsFor, VRM_MANIFEST } from "@/lib/vrm-manifest";
 
 type TabId = "variant" | "motion" | "scene";
 
@@ -34,11 +35,20 @@ export default function ClosetPage() {
     [edited, state.look],
   );
 
+  const borrowedOutfits = useMemo(
+    () =>
+      Object.entries(VRM_MANIFEST).flatMap(([personaId, variants]) => {
+        if (personaId === state.persona.id) return [];
+        const owner = PRESETS.find((preset) => preset.persona.id === personaId)?.persona.name;
+        return variants.map((variant) => ({ ...variant, personaId, owner: owner ?? personaId }));
+      }),
+    [state.persona.id],
+  );
+
   if (!ready) return <div className="flex-1 bg-[#12121a]" />;
 
   const variants = variantsFor(state.persona.id, draft.variantId);
-  const options: PartOption[] =
-    tabId === "variant" ? variants : tabId === "motion" ? MOTION : SCENE;
+  const options: PartOption[] = tabId === "motion" ? MOTION : SCENE;
 
   const save = () => {
     setLook(draft);
@@ -111,33 +121,124 @@ export default function ClosetPage() {
 
         {/* アイテム一覧 */}
         <div className="no-scrollbar h-[calc(100%-52px)] overflow-y-auto px-2.5 py-2.5">
-          <div className="grid grid-cols-4 gap-2">
-            {options.map((opt) => {
-              const selected = draft[tab.key] === opt.id;
-              return (
-                <button
-                  key={opt.id}
-                  onClick={() => setEdited({ ...draft, [tab.key]: opt.id })}
-                  title={opt.name}
-                  className={`relative overflow-hidden rounded-xl border-2 bg-gradient-to-b
-                              from-[#eef6fd] to-[#d9e9f7] transition active:scale-95 ${
-                                selected ? "border-pink-cta" : "border-transparent"
-                              }`}
-                >
-                  <div className="aspect-square w-full" />
-                  <span className="absolute top-0.5 right-1">
-                    <RarityBadge rarity={opt.rarity} />
-                  </span>
-                  <span
-                    className="absolute inset-x-0 bottom-0 truncate bg-black/45 px-1 py-[2px]
-                               text-[9px] font-bold text-white"
+          {tabId === "variant" ? (
+            <div className="space-y-3">
+              <section>
+                <h2 className="mb-1.5 px-0.5 text-[10px] font-bold text-[#777789]">
+                  {state.persona.name}の衣装
+                </h2>
+                <div className="grid grid-cols-4 gap-2">
+                  {variants.map((opt) => {
+                    const selected = !draft.outfit && draft.variantId === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        onClick={() =>
+                          setEdited({ ...draft, variantId: opt.id, outfit: null })
+                        }
+                        title={opt.name}
+                        className={`relative overflow-hidden rounded-xl border-2 bg-gradient-to-b
+                                    from-[#eef6fd] to-[#d9e9f7] transition active:scale-95 ${
+                                      selected ? "border-pink-cta" : "border-transparent"
+                                    }`}
+                      >
+                        <div className="aspect-square w-full" />
+                        <span className="absolute top-0.5 right-1">
+                          <RarityBadge rarity={opt.rarity} />
+                        </span>
+                        <span
+                          className="absolute inset-x-0 bottom-0 truncate bg-black/45 px-1 py-[2px]
+                                     text-[9px] font-bold text-white"
+                        >
+                          {opt.name}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+
+              {borrowedOutfits.length > 0 && (
+                <section className="rounded-xl bg-[#fff4f8] p-2">
+                  <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                    <h2 className="text-[10px] font-bold text-[#e34c82]">
+                      ほかのキャラの服を試着
+                    </h2>
+                    <span className="text-[8px] font-bold text-[#a77788]">試作版</span>
+                  </div>
+                  <p className="mb-2 text-[9px] leading-relaxed text-[#8d7180]">
+                    顔・髪・肌はそのまま。体型差がある服は少しずれることがあります。
+                  </p>
+                  <div className="grid grid-cols-4 gap-2">
+                    {borrowedOutfits.map((opt) => {
+                      const outfit: OutfitRef = {
+                        personaId: opt.personaId,
+                        variantId: opt.id,
+                      };
+                      const selected =
+                        draft.outfit?.personaId === outfit.personaId &&
+                        draft.outfit?.variantId === outfit.variantId;
+                      return (
+                        <button
+                          key={`${opt.personaId}:${opt.id}`}
+                          onClick={() => setEdited({ ...draft, outfit })}
+                          title={`${opt.owner}の${opt.name}`}
+                          className={`relative overflow-hidden rounded-xl border-2 bg-gradient-to-b
+                                      from-[#fffafd] to-[#f5ddea] transition active:scale-95 ${
+                                        selected ? "border-pink-cta" : "border-transparent"
+                                      }`}
+                        >
+                          <div className="grid aspect-square w-full place-items-center pb-3 text-[22px]">
+                            👗
+                          </div>
+                          <span className="absolute top-0.5 right-1">
+                            <RarityBadge rarity={opt.rarity} />
+                          </span>
+                          <span className="absolute inset-x-0 bottom-[14px] truncate px-1 text-[7px] font-bold text-[#9c6d80]">
+                            {opt.owner}
+                          </span>
+                          <span
+                            className="absolute inset-x-0 bottom-0 truncate bg-[#a9617e]/80 px-1 py-[2px]
+                                       text-[9px] font-bold text-white"
+                          >
+                            {opt.name}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-4 gap-2">
+              {options.map((opt) => {
+                const selected = draft[tab.key] === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    onClick={() => setEdited({ ...draft, [tab.key]: opt.id })}
+                    title={opt.name}
+                    className={`relative overflow-hidden rounded-xl border-2 bg-gradient-to-b
+                                from-[#eef6fd] to-[#d9e9f7] transition active:scale-95 ${
+                                  selected ? "border-pink-cta" : "border-transparent"
+                                }`}
                   >
-                    {opt.name}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+                    <div className="aspect-square w-full" />
+                    <span className="absolute top-0.5 right-1">
+                      <RarityBadge rarity={opt.rarity} />
+                    </span>
+                    <span
+                      className="absolute inset-x-0 bottom-0 truncate bg-black/45 px-1 py-[2px]
+                                 text-[9px] font-bold text-white"
+                    >
+                      {opt.name}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -2,13 +2,14 @@
 
 import { OrbitControls } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
-import { useState, type RefObject } from "react";
+import { useCallback, useState, type RefObject } from "react";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import type { Expression } from "@/lib/expressions";
-import { VrmModel } from "./VrmModel";
+import { VrmModel, type ModelBounds } from "./VrmModel";
 
-export function VrmCanvas({
+function OutfitPair({
   url,
+  outfitUrl,
   motionUrl,
   expression,
   talking,
@@ -18,6 +19,79 @@ export function VrmCanvas({
   onError,
 }: {
   url: string;
+  outfitUrl: string | null;
+  motionUrl: string;
+  expression: Expression;
+  talking: boolean;
+  reducedMotion: boolean;
+  orbitControlsRef: RefObject<OrbitControlsImpl | null>;
+  onReady?: () => void;
+  onError?: () => void;
+}) {
+  const [outfitReady, setOutfitReady] = useState(false);
+  const [baseBounds, setBaseBounds] = useState<ModelBounds | null>(null);
+  const [outfitBounds, setOutfitBounds] = useState<ModelBounds | null>(null);
+
+  const onBaseBounds = useCallback((bounds: ModelBounds) => setBaseBounds(bounds), []);
+  const onOutfitBounds = useCallback((bounds: ModelBounds) => setOutfitBounds(bounds), []);
+
+  const outfitScale =
+    baseBounds && outfitBounds && outfitBounds.height > 0
+      ? baseBounds.height / outfitBounds.height
+      : 1;
+  const outfitOffsetY =
+    baseBounds && outfitBounds ? baseBounds.minY - outfitBounds.minY * outfitScale : 0;
+  const hasOutfit = Boolean(outfitUrl);
+
+  return (
+    <>
+      <VrmModel
+        url={url}
+        motionUrl={motionUrl}
+        expression={expression}
+        talking={talking}
+        reducedMotion={reducedMotion}
+        orbitControlsRef={orbitControlsRef}
+        visibilityMode={hasOutfit && outfitReady ? "base" : "full"}
+        syncMotion={hasOutfit}
+        onMeasured={onBaseBounds}
+        onReady={onReady}
+        onError={onError}
+      />
+      {outfitUrl && (
+        <VrmModel
+          url={outfitUrl}
+          motionUrl={motionUrl}
+          expression="normal"
+          talking={false}
+          reducedMotion={reducedMotion}
+          orbitControlsRef={orbitControlsRef}
+          visibilityMode="clothes"
+          fitCamera={false}
+          syncMotion
+          modelScale={outfitScale}
+          modelOffsetY={outfitOffsetY}
+          onMeasured={onOutfitBounds}
+          onReady={() => setOutfitReady(true)}
+        />
+      )}
+    </>
+  );
+}
+
+export function VrmCanvas({
+  url,
+  outfitUrl = null,
+  motionUrl,
+  expression,
+  talking,
+  reducedMotion,
+  orbitControlsRef,
+  onReady,
+  onError,
+}: {
+  url: string;
+  outfitUrl?: string | null;
   motionUrl: string;
   expression: Expression;
   talking: boolean;
@@ -50,8 +124,10 @@ export function VrmCanvas({
     >
       <ambientLight intensity={0.95} />
       <directionalLight position={[0.5, 1, 0.8]} intensity={0.55} />
-      <VrmModel
+      <OutfitPair
+        key={outfitUrl ?? "base-only"}
         url={url}
+        outfitUrl={outfitUrl}
         motionUrl={motionUrl}
         expression={expression}
         talking={talking}

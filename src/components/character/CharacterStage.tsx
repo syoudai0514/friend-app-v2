@@ -54,7 +54,7 @@ export function CharacterStage({
   useEffect(() => {
     setVrmStatus("loading");
     setPosterFailed(false);
-  }, [personaId, look.variantId]);
+  }, [personaId, look.variantId, look.outfit?.personaId, look.outfit?.variantId]);
 
   const showPoster = vrmStatus === "error" && !posterFailed;
   const showErrorText = vrmStatus === "error" && posterFailed;
@@ -63,6 +63,9 @@ export function CharacterStage({
     <div className="absolute inset-0 bg-[#12121a]" style={{ bottom: lift }}>
       <VrmCanvas
         url={vrmUrl(personaId, look.variantId)}
+        outfitUrl={
+          look.outfit ? vrmUrl(look.outfit.personaId, look.outfit.variantId) : null
+        }
         motionUrl={vrmaUrl(look.motionId)}
         expression={expression}
         talking={talking}

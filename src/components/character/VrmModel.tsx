@@ -94,6 +94,17 @@ const BLINK_MIN_MS = 2600;
 const BLINK_MAX_MS = 6200;
 const BLINK_CLOSE_MS = 130;
 
+export interface ModelBounds {
+  height: number;
+  minY: number;
+}
+
+export type VrmVisibilityMode = "full" | "base" | "clothes";
+
+function isClothingMaterial(material: THREE.Material): boolean {
+  return /_CLOTH(?:_| \(|$)/.test(material.name);
+}
+
 function randomBetween(min: number, max: number): number {
   return min + Math.random() * (max - min);
 }
@@ -110,6 +121,12 @@ export function VrmModel({
   talking,
   reducedMotion,
   orbitControlsRef,
+  visibilityMode = "full",
+  fitCamera = true,
+  syncMotion = false,
+  modelScale = 1,
+  modelOffsetY = 0,
+  onMeasured,
   onReady,
   onError,
 }: {
@@ -119,6 +136,12 @@ export function VrmModel({
   talking: boolean;
   reducedMotion: boolean;
   orbitControlsRef: RefObject<OrbitControlsImpl | null>;
+  visibilityMode?: VrmVisibilityMode;
+  fitCamera?: boolean;
+  syncMotion?: boolean;
+  modelScale?: number;
+  modelOffsetY?: number;
+  onMeasured?: (bounds: ModelBounds) => void;
   onReady?: () => void;
   onError?: () => void;
 }) {
@@ -128,6 +151,8 @@ export function VrmModel({
   const blink = useRef({ nextAt: 0, closingUntil: 0 });
   const talkClock = useRef(0);
   const mixer = useRef<THREE.AnimationMixer | null>(null);
+  const activeAction = useRef<THREE.AnimationAction | null>(null);
+  const clipDuration = useRef(0);
   const moodWeights = useRef(initialMoodWeights());
   const shyPose = useRef<ShyPose | null>(null);
 
@@ -138,6 +163,23 @@ export function VrmModel({
   useEffect(() => {
     if (error) onError?.();
   }, [error, onError]);
+
+  // VRoidのマテリアル名にある _CLOTH を境界として、ベースの服を消したり
+  // 服だけを残したりする。アウトライン材も元の名前を含むので同じ判定で揃う。
+  useEffect(() => {
+    if (!vrm) return;
+    vrm.scene.traverse((obj) => {
+      if (!(obj instanceof THREE.Mesh)) return;
+      const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+      for (const material of materials) {
+        const clothing = isClothingMaterial(material);
+        material.visible =
+          visibilityMode === "full" ||
+          (visibilityMode === "base" && !clothing) ||
+          (visibilityMode === "clothes" && clothing);
+      }
+    });
+  }, [vrm, visibilityMode]);
 
   // 表情用の頭・目の差分回転はVRMごとに作る。切替時は必ず元へ戻し、
   // 次のモデルやモーションへ差分を持ち越さない。
@@ -175,11 +217,13 @@ export function VrmModel({
   useEffect(() => {
     if (!vrm || !vrmAnimation) {
       mixer.current = null;
+      activeAction.current = null;
+      clipDuration.current = 0;
       return;
     }
     const clip = createVRMAnimationClip(vrmAnimation, vrm);
     const m = new THREE.AnimationMixer(vrm.scene);
-    m.clipAction(clip).setLoop(THREE.LoopRepeat, Infinity).play();
+    const action = m.clipAction(clip).setLoop(THREE.LoopRepeat, Infinity).play();
 
     // ループの継ぎ目でポーズが不連続に飛ぶと、髪などのスプリングボーン物理が
     // その勢いを拾って一瞬暴れることがある。ループのたびに物理状態を
@@ -188,10 +232,14 @@ export function VrmModel({
     m.addEventListener("loop", onLoop);
 
     mixer.current = m;
+    activeAction.current = action;
+    clipDuration.current = clip.duration;
     return () => {
       m.removeEventListener("loop", onLoop);
       m.stopAllAction();
       mixer.current = null;
+      activeAction.current = null;
+      clipDuration.current = 0;
     };
   }, [vrm, vrmAnimation]);
 
@@ -204,6 +252,9 @@ export function VrmModel({
     const box = new THREE.Box3().setFromObject(vrm.scene);
     const height = box.max.y - box.min.y;
     if (!Number.isFinite(height) || height <= 0) return;
+
+    onMeasured?.({ height, minY: box.min.y });
+    if (!fitCamera) return;
 
     const centerX = (box.min.x + box.max.x) / 2;
     const centerZ = (box.min.z + box.max.z) / 2;
@@ -226,7 +277,7 @@ export function VrmModel({
       // これで「↺」ボタン(reset)がこの初期位置に戻るようになる
       controls.saveState();
     }
-  }, [vrm, camera, orbitControlsRef]);
+  }, [vrm, camera, fitCamera, onMeasured, orbitControlsRef]);
 
   useFrame((state, delta) => {
     if (!vrm) return;
@@ -239,7 +290,14 @@ export function VrmModel({
     if (mixer.current) {
       // 視差効果を減らす設定のときはモーションも止める（姿勢はそのまま維持）
       mixer.current.timeScale = reducedMotion ? 0 : 1;
-      mixer.current.update(delta);
+      if (syncMotion && activeAction.current && clipDuration.current > 0) {
+        activeAction.current.time = reducedMotion
+          ? 0
+          : state.clock.elapsedTime % clipDuration.current;
+        mixer.current.update(0);
+      } else {
+        mixer.current.update(delta);
+      }
     }
 
     if (pose) {
@@ -310,14 +368,14 @@ export function VrmModel({
     // 呼吸とゆらぎ。視差効果を減らす設定のときは止める
     if (!reducedMotion) {
       const t = state.clock.elapsedTime;
-      vrm.scene.position.y = Math.sin(t * 1.5) * 0.006;
+      vrm.scene.position.y = modelOffsetY + Math.sin(t * 1.5) * 0.006;
       vrm.scene.rotation.z = Math.sin(t * 0.85) * 0.006;
     } else {
-      vrm.scene.position.y = 0;
+      vrm.scene.position.y = modelOffsetY;
       vrm.scene.rotation.z = 0;
     }
   });
 
   if (!vrm) return null;
-  return <primitive object={vrm.scene} />;
+  return <primitive object={vrm.scene} scale={modelScale} />;
 }
