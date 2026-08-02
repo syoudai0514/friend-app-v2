@@ -9,6 +9,7 @@ import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { EXPRESSIONS, type Expression } from "@/lib/expressions";
 import { useVrm } from "./useVrm";
 import { useVrma } from "./useVrma";
+import type { StageViewState } from "./stage-view";
 
 /** 気分の表情プリセット。まばたき(blink*)や口の形(aa)とは別に、毎フレーム一度リセットしてから適用する */
 const MOOD_PRESETS = ["happy", "angry", "sad", "relaxed", "surprised", "neutral"] as const;
@@ -217,6 +218,7 @@ export function VrmModel({
   mouthTextureUrl = null,
   bodySkinColor = null,
   bodySkinSourceColor = null,
+  initialView = null,
   fitCamera = true,
   syncMotion = false,
   modelScale = 1,
@@ -242,6 +244,7 @@ export function VrmModel({
   mouthTextureUrl?: string | null;
   bodySkinColor?: string | null;
   bodySkinSourceColor?: string | null;
+  initialView?: StageViewState | null;
   fitCamera?: boolean;
   syncMotion?: boolean;
   modelScale?: number | [number, number, number];
@@ -491,8 +494,18 @@ export function VrmModel({
       controls.update();
       // これで「↺」ボタン(reset)がこの初期位置に戻るようになる
       controls.saveState();
+
+      // ホームなど前の画面で動かしていた場合は、初期位置をreset用に保存したあとで
+      // そのカメラ位置・注視点・ズームへ戻す。
+      if (initialView) {
+        camera.position.fromArray(initialView.cameraPosition);
+        perspective.zoom = initialView.zoom;
+        perspective.updateProjectionMatrix();
+        controls.target.fromArray(initialView.target);
+        controls.update();
+      }
     }
-  }, [vrm, camera, fitCamera, onMeasured, orbitControlsRef]);
+  }, [vrm, camera, fitCamera, initialView, onMeasured, orbitControlsRef]);
 
   useFrame((state, delta) => {
     if (!vrm) return;

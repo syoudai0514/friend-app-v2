@@ -75,6 +75,26 @@ button {
          shadow-[0_4px_16px_rgba(0,0,0,.16)] backdrop-blur-[7px];
 }
 
+/* トーク画面では人物とモーションを隠しすぎないよう、さらに透かす。
+   薄い縁・控えめなぼかし・文字の白い影で、背景色が変わっても読みやすさを保つ */
+.chat-bubble {
+  background: rgba(255, 255, 255, 0.48);
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  color: #20202a;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.14);
+  backdrop-filter: blur(2px) saturate(112%);
+  -webkit-backdrop-filter: blur(2px) saturate(112%);
+  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.88);
+}
+
+.chat-bubble-user {
+  background: linear-gradient(rgba(255, 111, 157, 0.7), rgba(240, 68, 124, 0.62));
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  backdrop-filter: blur(2px) saturate(112%);
+  -webkit-backdrop-filter: blur(2px) saturate(112%);
+  text-shadow: 0 1px 2px rgba(80, 20, 44, 0.36);
+}
+
 /* キャラ名タグ */
 .name-tag {
   @apply inline-flex items-center gap-1 rounded-full bg-gradient-to-b from-[#ff8fb2] to-pink-cta

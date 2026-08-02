@@ -134,7 +134,8 @@ export default function ChatPage() {
     <Stage
       look={state.look}
       personaId={state.persona.id}
-      dim={0.22}
+      dim={0.12}
+      lift={56}
       expression={stageExpression}
       talking={busy}
     >
@@ -167,7 +168,7 @@ export default function ChatPage() {
         {state.messages.length === 0 && greeting && (
           <div className="flex flex-col items-start">
             <span className="name-tag mb-1">{state.persona.name}</span>
-            <div className="bubble animate-rise max-w-[86%]">{greeting}</div>
+            <div className="bubble chat-bubble animate-rise max-w-[86%]">{greeting}</div>
           </div>
         )}
 
@@ -175,8 +176,8 @@ export default function ChatPage() {
           m.role === "user" ? (
             <div key={i} className="flex justify-end">
               <div
-                className="max-w-[80%] rounded-[18px] rounded-br-[6px] bg-gradient-to-b
-                           from-[#ff8fb2] to-pink-cta px-4 py-2.5 text-[15px] leading-[1.6]
+                className="chat-bubble-user max-w-[80%] rounded-[18px] rounded-br-[6px]
+                           px-4 py-2.5 text-[15px] leading-[1.6]
                            text-white shadow-[0_3px_10px_rgba(0,0,0,.22)]"
               >
                 {m.text}
@@ -185,7 +186,7 @@ export default function ChatPage() {
           ) : (
             <div key={i} className="flex flex-col items-start">
               <span className="name-tag mb-1">{state.persona.name}</span>
-              <div className="bubble max-w-[86%]">
+              <div className="bubble chat-bubble max-w-[86%]">
                 {m.text || (
                   <span className="text-[#9a9aa8]">
                     <Dots />

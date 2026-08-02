@@ -1,11 +1,12 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import type { Expression } from "@/lib/expressions";
 import type { Look } from "@/lib/types";
 import { posterUrl, vrmaUrl, vrmUrl } from "@/lib/vrm-assets";
+import type { StageViewState } from "./stage-view";
 
 // three系はサイズが大きいので、クライアントでしか要らないWebGL部分だけ切り出して遅延読み込みする
 const VrmCanvas = dynamic(() => import("./VrmCanvas").then((m) => m.VrmCanvas), { ssr: false });
@@ -14,6 +15,23 @@ const BODY_SKIN_COLORS: Record<string, string> = {
   aimi: "#f9e7d9",
   shizuku: "#e2c29f",
 };
+
+// Next.jsの画面切替でCanvasが作り直されても、同じキャラ・衣装なら見ていた位置を戻す。
+// 衣装ごとに体格が違うため、見た目の組み合わせをキーにして混線を防ぐ。
+const stageViews = new Map<string, StageViewState>();
+
+function stageViewKey(personaId: string, look: Look): string {
+  return [
+    personaId,
+    look.variantId,
+    look.outfit?.personaId,
+    look.outfit?.variantId,
+    look.hair?.personaId,
+    look.hair?.variantId,
+  ]
+    .filter(Boolean)
+    .join("|");
+}
 
 function usePrefersReducedMotion(): boolean {
   const [reduced, setReduced] = useState(false);
@@ -54,6 +72,12 @@ export function CharacterStage({
   const [vrmStatus, setVrmStatus] = useState<"loading" | "ready" | "error">("loading");
   const [posterFailed, setPosterFailed] = useState(false);
   const orbitControlsRef = useRef<OrbitControlsImpl | null>(null);
+  const viewKey = stageViewKey(personaId, look);
+  const initialView = stageViews.get(viewKey) ?? null;
+  const rememberView = useCallback(
+    (view: StageViewState) => stageViews.set(viewKey, view),
+    [viewKey],
+  );
 
   // バリアントが変わったら読み込み状態をリセットする
   useEffect(() => {
@@ -91,6 +115,8 @@ export function CharacterStage({
         bodySkinSourceColor={
           look.outfit ? (BODY_SKIN_COLORS[look.outfit.personaId] ?? "#e6c8aa") : null
         }
+        initialView={initialView}
+        onViewChange={rememberView}
         motionUrl={vrmaUrl(look.motionId)}
         expression={expression}
         talking={talking}
