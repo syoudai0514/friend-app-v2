@@ -138,6 +138,7 @@ export function VrmModel({
   irisTextureUrl = null,
   browsTextureUrl = null,
   mouthTextureUrl = null,
+  bodySkinColor = null,
   fitCamera = true,
   syncMotion = false,
   modelScale = 1,
@@ -160,6 +161,7 @@ export function VrmModel({
   irisTextureUrl?: string | null;
   browsTextureUrl?: string | null;
   mouthTextureUrl?: string | null;
+  bodySkinColor?: string | null;
   fitCamera?: boolean;
   syncMotion?: boolean;
   modelScale?: number | [number, number, number];
@@ -209,6 +211,45 @@ export function VrmModel({
       }
     });
   }, [hideClothes, hideHair, materialMode, vrm]);
+
+  // VRoidは衣装で隠れる下着・タイツなどをBodyの肌画像へ焼き込むことがある。
+  // そのまま別衣装へ替えると黒い領域が胸や脚に露出するため、着せ替え中だけ
+  // Bodyをキャラ固有の無地の肌色へ置き換える。顔は別マテリアルなので影響しない。
+  useEffect(() => {
+    if (!vrm || !bodySkinColor) return;
+    const hex = bodySkinColor.replace(/^#/, "");
+    if (!/^[0-9a-f]{6}$/i.test(hex)) return;
+    const value = Number.parseInt(hex, 16);
+    const texture = new THREE.DataTexture(
+      new Uint8Array([(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff, 0xff]),
+      1,
+      1,
+      THREE.RGBAFormat,
+    );
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.needsUpdate = true;
+
+    const originalMaps = new Map<TexturedMaterial, THREE.Texture | null>();
+    vrm.scene.traverse((obj) => {
+      if (!(obj instanceof THREE.Mesh)) return;
+      const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+      for (const material of materials) {
+        if (/Body_00_SKIN/.test(material.name) && hasTextureMap(material)) {
+          originalMaps.set(material, material.map);
+          material.map = texture;
+          material.needsUpdate = true;
+        }
+      }
+    });
+
+    return () => {
+      for (const [material, map] of originalMaps) {
+        material.map = map;
+        material.needsUpdate = true;
+      }
+      texture.dispose();
+    };
+  }, [bodySkinColor, vrm]);
 
   // VRoid共通UVを使い、顔の形状や表情モーフはベースキャラのまま、
   // 瞳・眉・口の画像だけを差し替える。読み直し時は必ず元の画像へ戻す。
