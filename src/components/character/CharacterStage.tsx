@@ -70,15 +70,7 @@ export function CharacterStage({
 
   const showPoster = vrmStatus === "error" && !posterFailed;
   const showErrorText = vrmStatus === "error" && posterFailed;
-  const isBorrowedOutfit = Boolean(
-    look.outfit &&
-      (look.outfit.personaId !== personaId || look.outfit.variantId !== look.variantId),
-  );
-  // しずくの私服は胸まわりが薄い体型に合わせて作られているため、別バリアントへ
-  // 着せる場合だけ前後へ少し余裕を持たせ、モーション中の突き抜けを抑える。
-  const isShizukuCasual =
-    look.outfit?.personaId === "shizuku" && look.outfit.variantId === "casual";
-  const outfitDepthScale = isShizukuCasual && isBorrowedOutfit ? 1.14 : 1;
+  const hasOutfitOverride = Boolean(look.outfit);
 
   return (
     <div className="absolute inset-0 bg-[#12121a]" style={{ bottom: lift }}>
@@ -87,7 +79,6 @@ export function CharacterStage({
         outfitUrl={
           look.outfit ? vrmUrl(look.outfit.personaId, look.outfit.variantId) : null
         }
-        outfitDepthScale={outfitDepthScale}
         hairUrl={look.hair ? vrmUrl(look.hair.personaId, look.hair.variantId) : null}
         irisTextureUrl={look.iris ? `/face-parts/${look.iris.personaId}/iris.png` : null}
         browsTextureUrl={
@@ -96,7 +87,10 @@ export function CharacterStage({
         mouthTextureUrl={
           look.mouth ? `/face-parts/${look.mouth.personaId}/mouth.png` : null
         }
-        bodySkinColor={isBorrowedOutfit ? (BODY_SKIN_COLORS[personaId] ?? "#e6c8aa") : null}
+        bodySkinColor={hasOutfitOverride ? (BODY_SKIN_COLORS[personaId] ?? "#e6c8aa") : null}
+        bodySkinSourceColor={
+          look.outfit ? (BODY_SKIN_COLORS[look.outfit.personaId] ?? "#e6c8aa") : null
+        }
         motionUrl={vrmaUrl(look.motionId)}
         expression={expression}
         talking={talking}
