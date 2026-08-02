@@ -95,6 +95,9 @@ const BLINK_MIN_MS = 2600;
 const BLINK_MAX_MS = 6200;
 const BLINK_CLOSE_MS = 130;
 
+/** カメラが顔や後頭部の内側へ入り込まない、頭の中心からの最小距離（m） */
+const MIN_HEAD_CAMERA_DISTANCE = 0.45;
+
 export interface ModelBounds {
   height: number;
   minY: number;
@@ -267,6 +270,8 @@ export function VrmModel({
   const clipDuration = useRef(0);
   const moodWeights = useRef(initialMoodWeights());
   const shyPose = useRef<ShyPose | null>(null);
+  const headWorldPosition = useRef(new THREE.Vector3());
+  const headCameraOffset = useRef(new THREE.Vector3());
 
   useEffect(() => {
     if (vrm) onReady?.();
@@ -275,6 +280,24 @@ export function VrmModel({
   useEffect(() => {
     if (error) onError?.();
   }, [error, onError]);
+
+  // VRMの各メッシュが持つ初期姿勢の境界だけで描画省略を判定すると、腹筋などで
+  // 大きく動いた顔・髪・身体が画面内にあっても消える。スキニング後の見た目を
+  // 優先し、VRMメッシュは常に描画候補に残す。
+  useEffect(() => {
+    if (!vrm) return;
+    const previous = new Map<THREE.Mesh, boolean>();
+    vrm.scene.traverse((obj) => {
+      if (!(obj instanceof THREE.Mesh)) return;
+      previous.set(obj, obj.frustumCulled);
+      obj.frustumCulled = false;
+    });
+    return () => {
+      for (const [mesh, frustumCulled] of previous) {
+        mesh.frustumCulled = frustumCulled;
+      }
+    };
+  }, [vrm]);
 
   // VRoidのマテリアル名にある _CLOTH / _HAIR を境界として、ベース側の
   // パーツを隠したり、提供元側の対象パーツだけを残したりする。
@@ -615,6 +638,27 @@ export function VrmModel({
       vrm.scene.position.y = modelOffsetY;
       vrm.scene.position.z = modelOffsetZ;
       vrm.scene.rotation.z = 0;
+    }
+
+    // OrbitControlsのminDistanceは「注視点まで」の距離なので、2本指で位置を
+    // ずらすと注視点ごと移動し、モーション中の頭へカメラが入り込めてしまう。
+    // アニメーション後の実際の頭を基準に、どのズーム・回転・位置からでも
+    // 頭の外側にカメラを押し戻す。表示を担当するベースVRMだけで行う。
+    if (fitCamera) {
+      const head = vrm.humanoid.getRawBoneNode("head");
+      if (head) {
+        vrm.scene.updateMatrixWorld(true);
+        head.getWorldPosition(headWorldPosition.current);
+        headCameraOffset.current.copy(camera.position).sub(headWorldPosition.current);
+        if (headCameraOffset.current.lengthSq() < MIN_HEAD_CAMERA_DISTANCE ** 2) {
+          if (headCameraOffset.current.lengthSq() === 0) {
+            headCameraOffset.current.set(0, 0, 1);
+          }
+          headCameraOffset.current.setLength(MIN_HEAD_CAMERA_DISTANCE);
+          camera.position.copy(headWorldPosition.current).add(headCameraOffset.current);
+          orbitControlsRef.current?.update();
+        }
+      }
     }
   });
 
