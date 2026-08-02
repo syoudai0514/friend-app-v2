@@ -21,6 +21,8 @@ export interface Look {
   variantId: string;
   /** null/未指定なら自分のVRMに含まれる服をそのまま使う */
   outfit?: OutfitRef | null;
+  /** null/未指定なら自分のVRMに含まれる髪をそのまま使う */
+  hair?: OutfitRef | null;
   scene: string;
   motionId: string;
 }

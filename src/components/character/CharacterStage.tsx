@@ -54,7 +54,14 @@ export function CharacterStage({
   useEffect(() => {
     setVrmStatus("loading");
     setPosterFailed(false);
-  }, [personaId, look.variantId, look.outfit?.personaId, look.outfit?.variantId]);
+  }, [
+    personaId,
+    look.variantId,
+    look.outfit?.personaId,
+    look.outfit?.variantId,
+    look.hair?.personaId,
+    look.hair?.variantId,
+  ]);
 
   const showPoster = vrmStatus === "error" && !posterFailed;
   const showErrorText = vrmStatus === "error" && posterFailed;
@@ -71,6 +78,7 @@ export function CharacterStage({
           look.outfit ? vrmUrl(look.outfit.personaId, look.outfit.variantId) : null
         }
         outfitDepthScale={outfitDepthScale}
+        hairUrl={look.hair ? vrmUrl(look.hair.personaId, look.hair.variantId) : null}
         motionUrl={vrmaUrl(look.motionId)}
         expression={expression}
         talking={talking}

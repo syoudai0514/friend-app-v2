@@ -10,10 +10,12 @@ import { useStore } from "@/lib/store";
 import type { Look, OutfitRef, PartOption } from "@/lib/types";
 import { variantsFor, VRM_MANIFEST } from "@/lib/vrm-manifest";
 
-type TabId = "variant" | "motion" | "scene";
+type TabId = "variant" | "hair" | "motion" | "scene";
+type ScalarLookKey = "variantId" | "motionId" | "scene";
 
-const TABS: { id: TabId; label: string; icon: string; key: keyof Look }[] = [
+const TABS: { id: TabId; label: string; icon: string; key?: ScalarLookKey }[] = [
   { id: "variant", label: "衣装", icon: "👗", key: "variantId" },
+  { id: "hair", label: "髪型", icon: "💇" },
   { id: "motion", label: "モーション", icon: "🕺", key: "motionId" },
   { id: "scene", label: "背景", icon: "🖼", key: "scene" },
 ];
@@ -41,6 +43,28 @@ export default function ClosetPage() {
         if (personaId === state.persona.id) return [];
         const owner = PRESETS.find((preset) => preset.persona.id === personaId)?.persona.name;
         return variants.map((variant) => ({ ...variant, personaId, owner: owner ?? personaId }));
+      }),
+    [state.persona.id],
+  );
+
+  const borrowedHair = useMemo(
+    () =>
+      PRESETS.flatMap((preset) => {
+        const personaId = preset.persona.id;
+        const variants = VRM_MANIFEST[personaId];
+        if (personaId === state.persona.id || !variants?.length) return [];
+        const preferred = variants.some((variant) => variant.id === preset.look.variantId)
+          ? preset.look.variantId
+          : variants[0].id;
+        return [
+          {
+            personaId,
+            variantId: preferred,
+            owner: preset.persona.name,
+            name: `${preset.persona.name}の髪型`,
+            rarity: "NR" as const,
+          },
+        ];
       }),
     [state.persona.id],
   );
@@ -210,14 +234,97 @@ export default function ClosetPage() {
                 </section>
               )}
             </div>
+          ) : tabId === "hair" ? (
+            <div className="space-y-3">
+              <section>
+                <h2 className="mb-1.5 px-0.5 text-[10px] font-bold text-[#777789]">
+                  髪型
+                </h2>
+                <div className="grid grid-cols-4 gap-2">
+                  <button
+                    onClick={() => setEdited({ ...draft, hair: null })}
+                    title={`${state.persona.name}の髪型`}
+                    className={`relative overflow-hidden rounded-xl border-2 bg-gradient-to-b
+                                from-[#eef6fd] to-[#d9e9f7] transition active:scale-95 ${
+                                  !draft.hair ? "border-pink-cta" : "border-transparent"
+                                }`}
+                  >
+                    <div className="grid aspect-square w-full place-items-center pb-3 text-[22px]">
+                      💇
+                    </div>
+                    <span className="absolute top-0.5 right-1">
+                      <RarityBadge rarity="NR" />
+                    </span>
+                    <span
+                      className="absolute inset-x-0 bottom-0 truncate bg-black/45 px-1 py-[2px]
+                                 text-[9px] font-bold text-white"
+                    >
+                      いつもの髪
+                    </span>
+                  </button>
+                </div>
+              </section>
+
+              {borrowedHair.length > 0 && (
+                <section className="rounded-xl bg-[#f2f7ff] p-2">
+                  <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                    <h2 className="text-[10px] font-bold text-[#4385bf]">
+                      ほかのキャラの髪型を試着
+                    </h2>
+                    <span className="text-[8px] font-bold text-[#7895ae]">試作版</span>
+                  </div>
+                  <p className="mb-2 text-[9px] leading-relaxed text-[#6f8294]">
+                    頭の位置と身長差を自動で合わせます。衣装との同時試着は負荷が増えます。
+                  </p>
+                  <div className="grid grid-cols-4 gap-2">
+                    {borrowedHair.map((opt) => {
+                      const hair: OutfitRef = {
+                        personaId: opt.personaId,
+                        variantId: opt.variantId,
+                      };
+                      const selected =
+                        draft.hair?.personaId === hair.personaId &&
+                        draft.hair?.variantId === hair.variantId;
+                      return (
+                        <button
+                          key={`${opt.personaId}:${opt.variantId}`}
+                          onClick={() => setEdited({ ...draft, hair })}
+                          title={opt.name}
+                          className={`relative overflow-hidden rounded-xl border-2 bg-gradient-to-b
+                                      from-[#f8fbff] to-[#dcecff] transition active:scale-95 ${
+                                        selected ? "border-pink-cta" : "border-transparent"
+                                      }`}
+                        >
+                          <div className="grid aspect-square w-full place-items-center pb-3 text-[22px]">
+                            💇
+                          </div>
+                          <span className="absolute top-0.5 right-1">
+                            <RarityBadge rarity={opt.rarity} />
+                          </span>
+                          <span className="absolute inset-x-0 bottom-[14px] truncate px-1 text-[7px] font-bold text-[#5f7f9a]">
+                            {opt.owner}
+                          </span>
+                          <span
+                            className="absolute inset-x-0 bottom-0 truncate bg-[#5887af]/80 px-1 py-[2px]
+                                       text-[9px] font-bold text-white"
+                          >
+                            髪型
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+            </div>
           ) : (
             <div className="grid grid-cols-4 gap-2">
               {options.map((opt) => {
-                const selected = draft[tab.key] === opt.id;
+                const selected = tab.key ? draft[tab.key] === opt.id : false;
                 return (
                   <button
                     key={opt.id}
-                    onClick={() => setEdited({ ...draft, [tab.key]: opt.id })}
+                    onClick={() => tab.key && setEdited({ ...draft, [tab.key]: opt.id })}
                     title={opt.name}
                     className={`relative overflow-hidden rounded-xl border-2 bg-gradient-to-b
                                 from-[#eef6fd] to-[#d9e9f7] transition active:scale-95 ${

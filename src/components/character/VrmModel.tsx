@@ -97,12 +97,17 @@ const BLINK_CLOSE_MS = 130;
 export interface ModelBounds {
   height: number;
   minY: number;
+  head: { x: number; y: number; z: number } | null;
 }
 
-export type VrmVisibilityMode = "full" | "base" | "clothes";
+export type VrmMaterialMode = "full" | "onlyClothes" | "onlyHair";
 
 function isClothingMaterial(material: THREE.Material): boolean {
   return /_CLOTH(?:_| \(|$)/.test(material.name);
+}
+
+function isHairMaterial(material: THREE.Material): boolean {
+  return /_HAIR(?:_| \(|$)/.test(material.name);
 }
 
 function randomBetween(min: number, max: number): number {
@@ -121,11 +126,15 @@ export function VrmModel({
   talking,
   reducedMotion,
   orbitControlsRef,
-  visibilityMode = "full",
+  materialMode = "full",
+  hideClothes = false,
+  hideHair = false,
   fitCamera = true,
   syncMotion = false,
   modelScale = 1,
+  modelOffsetX = 0,
   modelOffsetY = 0,
+  modelOffsetZ = 0,
   onMeasured,
   onReady,
   onError,
@@ -136,11 +145,15 @@ export function VrmModel({
   talking: boolean;
   reducedMotion: boolean;
   orbitControlsRef: RefObject<OrbitControlsImpl | null>;
-  visibilityMode?: VrmVisibilityMode;
+  materialMode?: VrmMaterialMode;
+  hideClothes?: boolean;
+  hideHair?: boolean;
   fitCamera?: boolean;
   syncMotion?: boolean;
   modelScale?: number | [number, number, number];
+  modelOffsetX?: number;
   modelOffsetY?: number;
+  modelOffsetZ?: number;
   onMeasured?: (bounds: ModelBounds) => void;
   onReady?: () => void;
   onError?: () => void;
@@ -164,8 +177,9 @@ export function VrmModel({
     if (error) onError?.();
   }, [error, onError]);
 
-  // VRoidのマテリアル名にある _CLOTH を境界として、ベースの服を消したり
-  // 服だけを残したりする。アウトライン材も元の名前を含むので同じ判定で揃う。
+  // VRoidのマテリアル名にある _CLOTH / _HAIR を境界として、ベース側の
+  // パーツを隠したり、提供元側の対象パーツだけを残したりする。
+  // アウトライン材も元の名前を含むので同じ判定で揃う。
   useEffect(() => {
     if (!vrm) return;
     vrm.scene.traverse((obj) => {
@@ -173,13 +187,16 @@ export function VrmModel({
       const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
       for (const material of materials) {
         const clothing = isClothingMaterial(material);
+        const hair = isHairMaterial(material);
         material.visible =
-          visibilityMode === "full" ||
-          (visibilityMode === "base" && !clothing) ||
-          (visibilityMode === "clothes" && clothing);
+          materialMode === "onlyClothes"
+            ? clothing
+            : materialMode === "onlyHair"
+              ? hair
+              : !(hideClothes && clothing) && !(hideHair && hair);
       }
     });
-  }, [vrm, visibilityMode]);
+  }, [hideClothes, hideHair, materialMode, vrm]);
 
   // 表情用の頭・目の差分回転はVRMごとに作る。切替時は必ず元へ戻し、
   // 次のモデルやモーションへ差分を持ち越さない。
@@ -253,7 +270,15 @@ export function VrmModel({
     const height = box.max.y - box.min.y;
     if (!Number.isFinite(height) || height <= 0) return;
 
-    onMeasured?.({ height, minY: box.min.y });
+    const headNode = vrm.humanoid.getRawBoneNode("head");
+    const headPosition = headNode ? headNode.getWorldPosition(new THREE.Vector3()) : null;
+    onMeasured?.({
+      height,
+      minY: box.min.y,
+      head: headPosition
+        ? { x: headPosition.x, y: headPosition.y, z: headPosition.z }
+        : null,
+    });
     if (!fitCamera) return;
 
     const centerX = (box.min.x + box.max.x) / 2;
@@ -368,10 +393,14 @@ export function VrmModel({
     // 呼吸とゆらぎ。視差効果を減らす設定のときは止める
     if (!reducedMotion) {
       const t = state.clock.elapsedTime;
+      vrm.scene.position.x = modelOffsetX;
       vrm.scene.position.y = modelOffsetY + Math.sin(t * 1.5) * 0.006;
+      vrm.scene.position.z = modelOffsetZ;
       vrm.scene.rotation.z = Math.sin(t * 0.85) * 0.006;
     } else {
+      vrm.scene.position.x = modelOffsetX;
       vrm.scene.position.y = modelOffsetY;
+      vrm.scene.position.z = modelOffsetZ;
       vrm.scene.rotation.z = 0;
     }
   });
