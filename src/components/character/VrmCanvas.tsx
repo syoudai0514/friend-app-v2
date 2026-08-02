@@ -19,6 +19,7 @@ function AppearanceLayers({
   bodySkinColor,
   bodySkinSourceColor,
   initialView,
+  minCameraDistance,
   motionUrl,
   expression,
   talking,
@@ -37,6 +38,7 @@ function AppearanceLayers({
   bodySkinColor: string | null;
   bodySkinSourceColor: string | null;
   initialView: StageViewState | null;
+  minCameraDistance: number;
   motionUrl: string;
   expression: Expression;
   talking: boolean;
@@ -92,6 +94,7 @@ function AppearanceLayers({
         browsTextureUrl={browsTextureUrl}
         mouthTextureUrl={mouthTextureUrl}
         initialView={initialView}
+        minCameraDistance={minCameraDistance}
         syncMotion={hasOutfit || hasHair}
         onMeasured={onBaseBounds}
         onReady={onReady}
@@ -181,6 +184,7 @@ export function VrmCanvas({
   // WebGL context lost（バックグラウンド復帰時など）が起きたら、
   // Canvasごと作り直してレンダラーを立て直す
   const [canvasKey, setCanvasKey] = useState(0);
+  const minCameraDistance = motionUrl.endsWith("/situp.vrma") ? 2.4 : 0.18;
   const rememberView = useCallback(() => {
     const controls = orbitControlsRef.current;
     if (!controls || !onViewChange) return;
@@ -232,6 +236,7 @@ export function VrmCanvas({
         reducedMotion={reducedMotion}
         orbitControlsRef={orbitControlsRef}
         initialView={initialView}
+        minCameraDistance={minCameraDistance}
         onReady={onReady}
         onError={onError}
       />
@@ -245,7 +250,9 @@ export function VrmCanvas({
         onChange={rememberView}
         enableDamping
         dampingFactor={0.15}
-        minDistance={0.18}
+        // 腹筋は頭が大きく手前へ動くため、顔の内側へ入らない距離で止める。
+        // それ以外は従来どおり近くまで寄れる。
+        minDistance={minCameraDistance}
         maxDistance={8}
         minPolarAngle={0.05}
         maxPolarAngle={Math.PI * 0.68}

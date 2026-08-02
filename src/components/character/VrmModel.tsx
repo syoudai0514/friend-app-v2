@@ -219,6 +219,7 @@ export function VrmModel({
   bodySkinColor = null,
   bodySkinSourceColor = null,
   initialView = null,
+  minCameraDistance = 0,
   fitCamera = true,
   syncMotion = false,
   modelScale = 1,
@@ -245,6 +246,7 @@ export function VrmModel({
   bodySkinColor?: string | null;
   bodySkinSourceColor?: string | null;
   initialView?: StageViewState | null;
+  minCameraDistance?: number;
   fitCamera?: boolean;
   syncMotion?: boolean;
   modelScale?: number | [number, number, number];
@@ -498,14 +500,22 @@ export function VrmModel({
       // ホームなど前の画面で動かしていた場合は、初期位置をreset用に保存したあとで
       // そのカメラ位置・注視点・ズームへ戻す。
       if (initialView) {
-        camera.position.fromArray(initialView.cameraPosition);
+        const restoredTarget = new THREE.Vector3().fromArray(initialView.target);
+        const restoredPosition = new THREE.Vector3().fromArray(initialView.cameraPosition);
+        const cameraOffset = restoredPosition.clone().sub(restoredTarget);
+        if (cameraOffset.length() < minCameraDistance) {
+          if (cameraOffset.lengthSq() === 0) cameraOffset.set(0, 0, 1);
+          cameraOffset.setLength(minCameraDistance);
+          restoredPosition.copy(restoredTarget).add(cameraOffset);
+        }
+        camera.position.copy(restoredPosition);
         perspective.zoom = initialView.zoom;
         perspective.updateProjectionMatrix();
-        controls.target.fromArray(initialView.target);
+        controls.target.copy(restoredTarget);
         controls.update();
       }
     }
-  }, [vrm, camera, fitCamera, initialView, onMeasured, orbitControlsRef]);
+  }, [vrm, camera, fitCamera, initialView, minCameraDistance, onMeasured, orbitControlsRef]);
 
   useFrame((state, delta) => {
     if (!vrm) return;
