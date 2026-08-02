@@ -5,6 +5,7 @@ import { Canvas } from "@react-three/fiber";
 import { useCallback, useState, type RefObject } from "react";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import type { Expression } from "@/lib/expressions";
+import type { StageViewState } from "./stage-view";
 import { VrmModel, type ModelBounds } from "./VrmModel";
 
 function AppearanceLayers({
@@ -17,6 +18,7 @@ function AppearanceLayers({
   mouthTextureUrl,
   bodySkinColor,
   bodySkinSourceColor,
+  initialView,
   motionUrl,
   expression,
   talking,
@@ -34,6 +36,7 @@ function AppearanceLayers({
   mouthTextureUrl: string | null;
   bodySkinColor: string | null;
   bodySkinSourceColor: string | null;
+  initialView: StageViewState | null;
   motionUrl: string;
   expression: Expression;
   talking: boolean;
@@ -88,6 +91,7 @@ function AppearanceLayers({
         irisTextureUrl={irisTextureUrl}
         browsTextureUrl={browsTextureUrl}
         mouthTextureUrl={mouthTextureUrl}
+        initialView={initialView}
         syncMotion={hasOutfit || hasHair}
         onMeasured={onBaseBounds}
         onReady={onReady}
@@ -145,6 +149,8 @@ export function VrmCanvas({
   mouthTextureUrl = null,
   bodySkinColor = null,
   bodySkinSourceColor = null,
+  initialView = null,
+  onViewChange,
   motionUrl,
   expression,
   talking,
@@ -162,6 +168,8 @@ export function VrmCanvas({
   mouthTextureUrl?: string | null;
   bodySkinColor?: string | null;
   bodySkinSourceColor?: string | null;
+  initialView?: StageViewState | null;
+  onViewChange?: (view: StageViewState) => void;
   motionUrl: string;
   expression: Expression;
   talking: boolean;
@@ -173,6 +181,18 @@ export function VrmCanvas({
   // WebGL context lost（バックグラウンド復帰時など）が起きたら、
   // Canvasごと作り直してレンダラーを立て直す
   const [canvasKey, setCanvasKey] = useState(0);
+  const rememberView = useCallback(() => {
+    const controls = orbitControlsRef.current;
+    if (!controls || !onViewChange) return;
+    const { position } = controls.object;
+    const { target } = controls;
+    const camera = controls.object as { zoom?: number };
+    onViewChange({
+      cameraPosition: [position.x, position.y, position.z],
+      target: [target.x, target.y, target.z],
+      zoom: typeof camera.zoom === "number" ? camera.zoom : 1,
+    });
+  }, [onViewChange, orbitControlsRef]);
 
   return (
     <Canvas
@@ -210,6 +230,7 @@ export function VrmCanvas({
         talking={talking}
         reducedMotion={reducedMotion}
         orbitControlsRef={orbitControlsRef}
+        initialView={initialView}
         onReady={onReady}
         onError={onError}
       />
@@ -220,6 +241,7 @@ export function VrmCanvas({
       */}
       <OrbitControls
         ref={orbitControlsRef}
+        onChange={rememberView}
         enableDamping
         dampingFactor={0.15}
         minDistance={0.15}
