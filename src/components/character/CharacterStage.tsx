@@ -58,6 +58,10 @@ export function CharacterStage({
 
   const showPoster = vrmStatus === "error" && !posterFailed;
   const showErrorText = vrmStatus === "error" && posterFailed;
+  // しずくの私服はアイミーより胸まわりが薄い体型に合わせて作られている。
+  // キャラ間試着のときだけ前後へ少し膨らませ、首元から肌が突き抜けるのを抑える。
+  const outfitDepthScale =
+    look.outfit?.personaId === "shizuku" && look.outfit.variantId === "casual" ? 1.1 : 1;
 
   return (
     <div className="absolute inset-0 bg-[#12121a]" style={{ bottom: lift }}>
@@ -66,6 +70,7 @@ export function CharacterStage({
         outfitUrl={
           look.outfit ? vrmUrl(look.outfit.personaId, look.outfit.variantId) : null
         }
+        outfitDepthScale={outfitDepthScale}
         motionUrl={vrmaUrl(look.motionId)}
         expression={expression}
         talking={talking}

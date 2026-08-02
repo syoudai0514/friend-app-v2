@@ -139,7 +139,7 @@ export function VrmModel({
   visibilityMode?: VrmVisibilityMode;
   fitCamera?: boolean;
   syncMotion?: boolean;
-  modelScale?: number;
+  modelScale?: number | [number, number, number];
   modelOffsetY?: number;
   onMeasured?: (bounds: ModelBounds) => void;
   onReady?: () => void;

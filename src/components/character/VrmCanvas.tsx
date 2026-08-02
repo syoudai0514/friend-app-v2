@@ -10,6 +10,7 @@ import { VrmModel, type ModelBounds } from "./VrmModel";
 function OutfitPair({
   url,
   outfitUrl,
+  outfitDepthScale,
   motionUrl,
   expression,
   talking,
@@ -20,6 +21,7 @@ function OutfitPair({
 }: {
   url: string;
   outfitUrl: string | null;
+  outfitDepthScale: number;
   motionUrl: string;
   expression: Expression;
   talking: boolean;
@@ -69,7 +71,7 @@ function OutfitPair({
           visibilityMode="clothes"
           fitCamera={false}
           syncMotion
-          modelScale={outfitScale}
+          modelScale={[outfitScale, outfitScale, outfitScale * outfitDepthScale]}
           modelOffsetY={outfitOffsetY}
           onMeasured={onOutfitBounds}
           onReady={() => setOutfitReady(true)}
@@ -82,6 +84,7 @@ function OutfitPair({
 export function VrmCanvas({
   url,
   outfitUrl = null,
+  outfitDepthScale = 1,
   motionUrl,
   expression,
   talking,
@@ -92,6 +95,7 @@ export function VrmCanvas({
 }: {
   url: string;
   outfitUrl?: string | null;
+  outfitDepthScale?: number;
   motionUrl: string;
   expression: Expression;
   talking: boolean;
@@ -128,6 +132,7 @@ export function VrmCanvas({
         key={outfitUrl ?? "base-only"}
         url={url}
         outfitUrl={outfitUrl}
+        outfitDepthScale={outfitDepthScale}
         motionUrl={motionUrl}
         expression={expression}
         talking={talking}
