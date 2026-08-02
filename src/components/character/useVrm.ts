@@ -82,19 +82,25 @@ export function useVrm(url: string | null): UseVrmResult {
         VRMUtils.removeUnnecessaryVertices(gltf.scene);
         VRMUtils.removeUnnecessaryJoints(gltf.scene);
 
-        // 髪・顔のパーツ（VRoidの命名規則で名前の末尾が _HAIR / _FACE）は
-        // 片面描画のことが多く、自由に回せるカメラで裏側に回り込むと消えて見える。
-        // この2カテゴリだけ両面描画にする。
+        // 読み込み時に顔・目・髪の描画方法を一度決め、以後は角度や姿勢に
+        // 左右されないよう固定する。これらは片面描画のことが多く、自由に
+        // 回せるカメラで裏側に回り込むと顔だけ消えて見えるため両面描画にする。
         // 服（_CLOTH）は元々VRoidの書き出し時点で必要な面は両面設定済みなので触らない
         // ——ここまで一律で両面化していたら、しゃがみ姿勢で服の折り返り部分の裏側
         // （本来見える想定のない面）まで見えてしまう副作用が出たため、対象を絞った
         gltf.scene.traverse((obj) => {
           if (!(obj instanceof THREE.Mesh)) return;
+          // 初期姿勢の境界で描画省略すると、モーションで大きく動いた顔・髪・身体が
+          // 画面内でも消えるため、VRMメッシュは常に描画候補に残す。
+          obj.frustumCulled = false;
           const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
           for (const mat of materials) {
             if ((mat as { isOutline?: boolean }).isOutline) continue;
             // GLTFLoader が名前の末尾に付けることがある " (Instance)" も許容する。
-            if (/_(HAIR|FACE)(?: \(Instance\))?$/.test(mat.name)) {
+            if (
+              /_(HAIR|FACE|EYE)(?: \(Instance\))?$/.test(mat.name) ||
+              /Face_00_SKIN(?: \(Instance\))?$/.test(mat.name)
+            ) {
               mat.side = THREE.DoubleSide;
               mat.needsUpdate = true;
             }

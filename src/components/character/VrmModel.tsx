@@ -118,6 +118,80 @@ function isBodyMaterial(material: THREE.Material): boolean {
   return /Body_00_SKIN/.test(material.name);
 }
 
+/**
+ * 衣装元のBodyには頭の下地まで含まれる。別体型へ重ねると顔より手前へ出るため、
+ * 頭ボーンに追従する三角形だけを除き、首より下の肌補完は残す。
+ */
+function bodyGeometryWithoutHead(
+  mesh: THREE.SkinnedMesh,
+  head: THREE.Object3D,
+): THREE.BufferGeometry | null {
+  const geometry = mesh.geometry;
+  const position = geometry.getAttribute("position");
+  const skinIndex = geometry.getAttribute("skinIndex");
+  const skinWeight = geometry.getAttribute("skinWeight");
+  if (!position || !skinIndex || !skinWeight) return null;
+
+  const headBoneIndices = new Set<number>();
+  head.traverse((node) => {
+    const boneIndex = mesh.skeleton.bones.indexOf(node as THREE.Bone);
+    if (boneIndex >= 0) headBoneIndices.add(boneIndex);
+  });
+  if (headBoneIndices.size === 0) return null;
+
+  const belongsToHead = new Uint8Array(position.count);
+  let matchingVertices = 0;
+  for (let vertex = 0; vertex < position.count; vertex += 1) {
+    let headWeight = 0;
+    for (let slot = 0; slot < 4; slot += 1) {
+      if (headBoneIndices.has(skinIndex.getComponent(vertex, slot))) {
+        headWeight += skinWeight.getComponent(vertex, slot);
+      }
+    }
+    if (headWeight >= 0.35) {
+      belongsToHead[vertex] = 1;
+      matchingVertices += 1;
+    }
+  }
+  if (matchingVertices === 0) return null;
+
+  const sourceIndex = geometry.index;
+  const sourceCount = sourceIndex?.count ?? position.count;
+  const indexAt = (offset: number) => (sourceIndex ? sourceIndex.getX(offset) : offset);
+  const sourceGroups =
+    geometry.groups.length > 0
+      ? geometry.groups
+      : [{ start: 0, count: sourceCount, materialIndex: 0 }];
+  const ranges = new Map<string, { start: number; count: number }>();
+  const indices: number[] = [];
+
+  for (const group of sourceGroups) {
+    const key = `${group.start}:${group.count}`;
+    if (ranges.has(key)) continue;
+    const start = indices.length;
+    const end = Math.min(group.start + group.count, sourceCount);
+    for (let offset = group.start; offset + 2 < end; offset += 3) {
+      const a = indexAt(offset);
+      const b = indexAt(offset + 1);
+      const c = indexAt(offset + 2);
+      if (belongsToHead[a] || belongsToHead[b] || belongsToHead[c]) continue;
+      indices.push(a, b, c);
+    }
+    ranges.set(key, { start, count: indices.length - start });
+  }
+
+  const filtered = geometry.clone();
+  filtered.setIndex(indices);
+  filtered.clearGroups();
+  for (const group of sourceGroups) {
+    const range = ranges.get(`${group.start}:${group.count}`);
+    if (range) filtered.addGroup(range.start, range.count, group.materialIndex);
+  }
+  filtered.computeBoundingBox();
+  filtered.computeBoundingSphere();
+  return filtered;
+}
+
 type TexturedMaterial = THREE.Material & { map: THREE.Texture | null };
 
 type Rgb = readonly [number, number, number];
@@ -274,30 +348,8 @@ export function VrmModel({
   const headCameraOffset = useRef(new THREE.Vector3());
 
   useEffect(() => {
-    if (vrm) onReady?.();
-  }, [vrm, onReady]);
-
-  useEffect(() => {
     if (error) onError?.();
   }, [error, onError]);
-
-  // VRMの各メッシュが持つ初期姿勢の境界だけで描画省略を判定すると、腹筋などで
-  // 大きく動いた顔・髪・身体が画面内にあっても消える。スキニング後の見た目を
-  // 優先し、VRMメッシュは常に描画候補に残す。
-  useEffect(() => {
-    if (!vrm) return;
-    const previous = new Map<THREE.Mesh, boolean>();
-    vrm.scene.traverse((obj) => {
-      if (!(obj instanceof THREE.Mesh)) return;
-      previous.set(obj, obj.frustumCulled);
-      obj.frustumCulled = false;
-    });
-    return () => {
-      for (const [mesh, frustumCulled] of previous) {
-        mesh.frustumCulled = frustumCulled;
-      }
-    };
-  }, [vrm]);
 
   // VRoidのマテリアル名にある _CLOTH / _HAIR を境界として、ベース側の
   // パーツを隠したり、提供元側の対象パーツだけを残したりする。
@@ -324,6 +376,42 @@ export function VrmModel({
       }
     });
   }, [hideBody, hideClothes, hideHair, materialMode, vrm]);
+
+  // 衣装元は首より下のBodyと服だけに固定する。顔・目・髪は常に本人側を使い、
+  // 体型差やモーションで衣装元の頭の下地が前へ出ないようにする。
+  useEffect(() => {
+    if (!vrm || materialMode !== "bodyAndClothes") return;
+    const head = vrm.humanoid.getRawBoneNode("head");
+    if (!head) return;
+
+    const replacements: Array<{
+      mesh: THREE.SkinnedMesh;
+      original: THREE.BufferGeometry;
+      filtered: THREE.BufferGeometry;
+    }> = [];
+    vrm.scene.traverse((obj) => {
+      if (!(obj instanceof THREE.SkinnedMesh)) return;
+      const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+      if (!materials.some(isBodyMaterial)) return;
+      const filtered = bodyGeometryWithoutHead(obj, head);
+      if (!filtered) return;
+      replacements.push({ mesh: obj, original: obj.geometry, filtered });
+      obj.geometry = filtered;
+    });
+
+    return () => {
+      for (const { mesh, original, filtered } of replacements) {
+        mesh.geometry = original;
+        filtered.dispose();
+      }
+    };
+  }, [materialMode, vrm]);
+
+  // 表示対象のパーツを固定してから親へ準備完了を伝える。これによりベース側を
+  // 隠すタイミングでも、一瞬だけ衣装元の全身が混ざる状態を作らない。
+  useEffect(() => {
+    if (vrm) onReady?.();
+  }, [vrm, onReady]);
 
   // 衣装側のBody形状を一緒に使うことで、VRoidの書き出し時に省かれた身体の面を補う。
   // Body画像に焼き込まれた下着・靴下・陰影は残し、肌に当たる色だけ着る側へ合わせる。
