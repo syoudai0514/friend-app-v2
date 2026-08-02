@@ -5,12 +5,12 @@ import { AppStateProvider } from "@/lib/store";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "こいびとアプリ",
-  description: "自分だけの恋人と話せるアプリ",
+  title: "フレンド",
+  description: "友達と話せるシンプルなチャットアプリ",
   // ホーム画面から開いたときにブラウザのバーを出さない
   appleWebApp: {
     capable: true,
-    title: "こいびと",
+    title: "フレンド",
     statusBarStyle: "black-translucent",
   },
   // 個人用なので検索には出さない
@@ -21,7 +21,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
-  themeColor: "#ff6f9c",
+  themeColor: "#243247",
   // iPhone のノッチ周りまで背景を敷く
   viewportFit: "cover",
 };
