@@ -11,6 +11,39 @@ interface UseVrmResult {
   error: boolean;
 }
 
+/** three-vrm が生成する MToon マテリアルのうち、肌の艶に使う部分だけを表した型 */
+type SkinMToonMaterial = THREE.Material & {
+  isMToonMaterial: true;
+  parametricRimColorFactor: THREE.Color;
+  rimLightingMixFactor: number;
+  parametricRimFresnelPowerFactor: number;
+  parametricRimLiftFactor: number;
+};
+
+function isSkinMToonMaterial(material: THREE.Material): material is SkinMToonMaterial {
+  return (
+    (material as { isMToonMaterial?: boolean }).isMToonMaterial === true &&
+    /_SKIN(?: \(Instance\))?$/.test(material.name)
+  );
+}
+
+/**
+ * VRoid 側のテクスチャはそのままに、アプリの照明を受ける暖色のリム光を足す。
+ * 顔は控えめ、脚を含む Body は少し強めにして、テカりではなく自然な艶に見せる。
+ */
+function addSkinSheen(material: SkinMToonMaterial): void {
+  const isFace = /Face_00_SKIN/.test(material.name);
+  material.parametricRimColorFactor.setRGB(
+    isFace ? 0.055 : 0.12,
+    isFace ? 0.025 : 0.055,
+    isFace ? 0.018 : 0.035,
+  );
+  material.parametricRimFresnelPowerFactor = isFace ? 5 : 3;
+  material.parametricRimLiftFactor = isFace ? 0.02 : 0.05;
+  material.rimLightingMixFactor = 0.75;
+  material.needsUpdate = true;
+}
+
 /**
  * VRMを1体読み込む。urlが変わるたびに読み直し、
  * 前のVRMは確実にdispose（GPUメモリ解放）してから次を読む
@@ -60,8 +93,12 @@ export function useVrm(url: string | null): UseVrmResult {
           const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
           for (const mat of materials) {
             if ((mat as { isOutline?: boolean }).isOutline) continue;
-            if (!/_(HAIR|FACE)$/.test(mat.name)) continue;
-            mat.side = THREE.DoubleSide;
+            // GLTFLoader が名前の末尾に付けることがある " (Instance)" も許容する。
+            if (/_(HAIR|FACE)(?: \(Instance\))?$/.test(mat.name)) {
+              mat.side = THREE.DoubleSide;
+              mat.needsUpdate = true;
+            }
+            if (isSkinMToonMaterial(mat)) addSkinSheen(mat);
           }
         });
 

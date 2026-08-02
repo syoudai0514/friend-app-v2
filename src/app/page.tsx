@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { AffectionGauge, SideMenu, Stage } from "@/components/ui";
+import { enhanceExpression } from "@/lib/expressions";
 import { idleLine } from "@/lib/prompt";
 import { useStore } from "@/lib/store";
 
@@ -84,7 +85,12 @@ export default function Home() {
 
   /* ----------------------------- ホーム ----------------------------- */
   return (
-    <Stage look={state.look} personaId={state.persona.id} lift={56}>
+    <Stage
+      look={state.look}
+      personaId={state.persona.id}
+      lift={56}
+      expression={enhanceExpression("normal", line)}
+    >
       {/* 上部 */}
       <div className="safe-top absolute inset-x-0 top-0 flex items-start justify-between px-3 pb-3">
         <AffectionGauge affection={state.affection} />
