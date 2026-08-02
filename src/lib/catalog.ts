@@ -6,6 +6,7 @@ import type { AffectionLevel, Look, PartOption } from "./types";
 
 export const SCENE: PartOption[] = [
   { id: "room", name: "自分の部屋", rarity: "NR" },
+  { id: "bed", name: "ベッドの上", rarity: "SR" },
   { id: "poolside", name: "プールサイド", rarity: "SSR" },
   { id: "arcade", name: "ゲームセンター", rarity: "SR" },
   { id: "office", name: "オフィス", rarity: "NR" },

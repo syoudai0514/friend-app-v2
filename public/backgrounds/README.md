@@ -20,6 +20,7 @@ public/backgrounds/night.webp
 | ID | 名前 |
 |---|---|
 | `room` | 自分の部屋 |
+| `bed` | ベッドの上 |
 | `poolside` | プールサイド |
 | `arcade` | ゲームセンター |
 | `office` | オフィス |
