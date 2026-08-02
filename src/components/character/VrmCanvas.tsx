@@ -198,7 +198,8 @@ export function VrmCanvas({
     <Canvas
       key={canvasKey}
       className="absolute inset-0"
-      camera={{ fov: 28, near: 0.1, far: 20 }}
+      // 顔へ寄ったときも、手前の髪・顔がnear planeで切れない距離にする。
+      camera={{ fov: 28, near: 0.01, far: 20 }}
       dpr={[1, 2]}
       gl={{ antialias: true, alpha: true, powerPreference: "high-performance" }}
       onCreated={(state) => {
@@ -244,7 +245,7 @@ export function VrmCanvas({
         onChange={rememberView}
         enableDamping
         dampingFactor={0.15}
-        minDistance={0.15}
+        minDistance={0.18}
         maxDistance={8}
         minPolarAngle={0.05}
         maxPolarAngle={Math.PI * 0.68}
