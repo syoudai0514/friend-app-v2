@@ -35,6 +35,11 @@ export const VRM_MANIFEST: Record<string, PartOption[]> = {
       "rarity": "NR"
     },
     {
+      "id": "knit",
+      "name": "長袖ニット",
+      "rarity": "NR"
+    },
+    {
       "id": "leather",
       "name": "黒レザードレス",
       "rarity": "NR"

@@ -24,8 +24,11 @@ export const EXPRESSIONS: Record<Expression, ExpressionPreset[]> = {
   normal: [],
   /** うれしい・笑っている */
   happy: [{ preset: "happy", weight: 1 }],
-  /** 照れ */
-  shy: [{ preset: "relaxed", weight: 1 }],
+  /** 照れ。やわらかい目元に小さな笑顔を重ねる */
+  shy: [
+    { preset: "relaxed", weight: 0.7 },
+    { preset: "happy", weight: 0.32 },
+  ],
   /** しょんぼり */
   sad: [{ preset: "sad", weight: 1 }],
   /** むくれている */
@@ -61,4 +64,20 @@ export function splitExpression(text: string): { expression: Expression; body: s
  */
 export function isTagIncomplete(text: string): boolean {
   return /^\s*[[［][a-zA-Z]*$/.test(text);
+}
+
+const SHY_CUES =
+  /(好き|大好き|愛して|かわい|可愛|照れ|恥ずか|ドキドキ|会いたかった|会えて|声を聞くと|そばに|ぎゅ|えへ)/;
+const HAPPY_CUES =
+  /(おかえり|うれし|嬉し|楽しい|ありがとう|来てくれ|待って|よかった|ふふ|おつかれ|えらい|元気|笑|お茶|落ち着)/;
+
+/**
+ * AIのタグが normal でも、本文が明らかに好意的なら表情を補う。
+ * ホームの固定セリフにも同じ判定を使い、会話との笑顔頻度を揃える。
+ */
+export function enhanceExpression(expression: Expression, body: string): Expression {
+  if (expression !== "normal") return expression;
+  if (SHY_CUES.test(body)) return "shy";
+  if (HAPPY_CUES.test(body)) return "happy";
+  return "normal";
 }

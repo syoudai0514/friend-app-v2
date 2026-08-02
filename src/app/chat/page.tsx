@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AffectionGauge, BackButton, Dots, Stage } from "@/components/ui";
-import { isTagIncomplete, splitExpression, type Expression } from "@/lib/expressions";
+import {
+  enhanceExpression,
+  isTagIncomplete,
+  splitExpression,
+  type Expression,
+} from "@/lib/expressions";
 import { finalizeMemory, splitMemory } from "@/lib/memory";
 import { PENDING_KEY } from "@/app/page";
 import { idleLine } from "@/lib/prompt";
@@ -76,13 +81,13 @@ export default function ChatPage() {
         // `[memory: ...` が見えないように表示を待つ
         const { expression: ex, body: afterExpression } = splitExpression(acc);
         const { body } = splitMemory(afterExpression);
-        setExpression(ex);
+        setExpression(enhanceExpression(ex, body));
         if (!isTagIncomplete(acc)) replaceLastModel(body);
       }
       acc += decoder.decode();
       const final = splitExpression(acc);
       const memory = finalizeMemory(final.body);
-      setExpression(final.expression);
+      setExpression(enhanceExpression(final.expression, memory.body));
       replaceLastModel(memory.body);
       if (memory.learned) addMemory(memory.learned);
 
@@ -121,13 +126,16 @@ export default function ChatPage() {
     state.messages.length > 0 &&
     state.messages[state.messages.length - 1].role === "model" &&
     state.messages[state.messages.length - 1].text === "";
+  const stageExpression = greeting
+    ? enhanceExpression(expression, greeting)
+    : expression;
 
   return (
     <Stage
       look={state.look}
       personaId={state.persona.id}
       dim={0.22}
-      expression={expression}
+      expression={stageExpression}
       talking={busy}
     >
       {/* 上部 */}

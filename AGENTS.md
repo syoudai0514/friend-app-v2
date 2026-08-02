@@ -42,7 +42,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 | personaId | 名前 | VRM衣装（variantId: 表示名） | 背景scene | 状態 |
 |---|---|---|---|---|
 | aimi | アイミー | swimsuit: ドレス / shirt: 腰巻きギャル / knit: オフショルニット | poolside | VRM済み |
-| shizuku | しずく | casual: 私服 / leather: 黒レザードレス / fftifa: FFVティファ | washitsu | VRM済み |
+| shizuku | しずく | casual: 私服（ノースリーブ） / knit: 長袖ニット / leather: 黒レザードレス / fftifa: FFVティファ | washitsu | VRM済み |
 | nagi | なぎ | （未作成、variantId="default"のダミー） | night | **VRM未着手** |
 | hinata | ひなた | （未作成） | classroom | **VRM未着手** |
 | rena | れな | （未作成） | office | **VRM未着手** |
@@ -107,6 +107,14 @@ src/lib/vrm-manifest.ts  自動生成ファイル（直接編集しない）
    呼んで対処している。
 6. **three@0.185は型を同梱しない。** `@types/three`を devDependencies に
    別途追加する必要がある（`npm i --save-dev @types/three`）。
+7. **肌の艶はVRM本体を再編集せず、読み込み時のMToon設定で足せる。**
+   マテリアル名末尾が`_SKIN`のものだけに暖色のparametric rimを設定し、顔は弱く、
+   脚を含むBodyは少し強くする。アウトラインは必ず除外し、服や髪には適用しない。
+   GLTFLoader後の名前には` (Instance)`が付くため、末尾判定ではこれも許容する。
+8. **照れ表情は表情プリセットだけでは伝わりにくい。** `relaxed`と小さな`happy`を
+   合成し、normalizedの頭・両目へ「うつむき＋視線そらし」の差分回転を重ねる。
+   差分は毎フレーム、AnimationMixer評価前に前回分を外してから付け直すこと。
+   外さず加算すると、静止ポーズで首や目の回転が累積して破綻する。
 
 ## Mixamo → Blender → VRMA の手順（確立済み）
 
@@ -166,7 +174,7 @@ src/lib/vrm-manifest.ts  自動生成ファイル（直接編集しない）
 
 ## Git運用
 
-- 開発ブランチ: `claude/friend-app-v2-vrm-r0lkkr`
+- 開発ブランチ: `agent/shizuku-sleeveless-expressions`（統合先: `main`）
 - コミットメッセージは日本語、「何を・なぜ」を書く（このリポジトリの
   git logを参照）。改修系コミットは原因と対処を書いておくと後から追える
 - 変更のたびに `npm run build` を通してからコミット・プッシュする

@@ -3,6 +3,7 @@
 import { useEffect, useRef, type RefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
+import type { VRM } from "@pixiv/three-vrm";
 import { createVRMAnimationClip } from "@pixiv/three-vrm-animation";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { EXPRESSIONS, type Expression } from "@/lib/expressions";
@@ -10,7 +11,83 @@ import { useVrm } from "./useVrm";
 import { useVrma } from "./useVrma";
 
 /** 気分の表情プリセット。まばたき(blink*)や口の形(aa)とは別に、毎フレーム一度リセットしてから適用する */
-const MOOD_PRESETS = ["happy", "angry", "sad", "relaxed", "surprised", "neutral"];
+const MOOD_PRESETS = ["happy", "angry", "sad", "relaxed", "surprised", "neutral"] as const;
+type MoodPreset = (typeof MOOD_PRESETS)[number];
+
+function initialMoodWeights(): Record<MoodPreset, number> {
+  return {
+    happy: 0,
+    angry: 0,
+    sad: 0,
+    relaxed: 0,
+    surprised: 0,
+    neutral: 0,
+  };
+}
+
+interface BoneOffset {
+  node: THREE.Object3D;
+  applied: THREE.Quaternion;
+  inverse: THREE.Quaternion;
+  euler: THREE.Euler;
+}
+
+interface ShyPose {
+  weight: number;
+  head: BoneOffset | null;
+  leftEye: BoneOffset | null;
+  rightEye: BoneOffset | null;
+}
+
+function boneOffset(node: THREE.Object3D | null): BoneOffset | null {
+  if (!node) return null;
+  return {
+    node,
+    applied: new THREE.Quaternion(),
+    inverse: new THREE.Quaternion(),
+    euler: new THREE.Euler(),
+  };
+}
+
+function shyPoseFor(vrm: VRM): ShyPose {
+  return {
+    weight: 0,
+    head: boneOffset(vrm.humanoid.getNormalizedBoneNode("head")),
+    leftEye: boneOffset(vrm.humanoid.getNormalizedBoneNode("leftEye")),
+    rightEye: boneOffset(vrm.humanoid.getNormalizedBoneNode("rightEye")),
+  };
+}
+
+/** 前フレームで足した差分だけを外し、モーションの基準姿勢へ戻す */
+function clearBoneOffset(bone: BoneOffset | null): void {
+  if (
+    !bone ||
+    (bone.applied.x === 0 && bone.applied.y === 0 && bone.applied.z === 0 && bone.applied.w === 1)
+  ) {
+    return;
+  }
+  bone.inverse.copy(bone.applied).invert();
+  bone.node.quaternion.multiply(bone.inverse).normalize();
+  bone.applied.identity();
+}
+
+function clearShyPose(pose: ShyPose): void {
+  clearBoneOffset(pose.head);
+  clearBoneOffset(pose.leftEye);
+  clearBoneOffset(pose.rightEye);
+}
+
+function applyBoneOffset(
+  bone: BoneOffset | null,
+  x: number,
+  y: number,
+  z: number,
+): void {
+  if (!bone) return;
+  bone.euler.set(x, y, z);
+  bone.applied.setFromEuler(bone.euler);
+  bone.node.quaternion.multiply(bone.applied).normalize();
+}
 
 /** v1のまばたき間隔・閉眼時間に合わせる */
 const BLINK_MIN_MS = 2600;
@@ -51,6 +128,8 @@ export function VrmModel({
   const blink = useRef({ nextAt: 0, closingUntil: 0 });
   const talkClock = useRef(0);
   const mixer = useRef<THREE.AnimationMixer | null>(null);
+  const moodWeights = useRef(initialMoodWeights());
+  const shyPose = useRef<ShyPose | null>(null);
 
   useEffect(() => {
     if (vrm) onReady?.();
@@ -59,6 +138,23 @@ export function VrmModel({
   useEffect(() => {
     if (error) onError?.();
   }, [error, onError]);
+
+  // 表情用の頭・目の差分回転はVRMごとに作る。切替時は必ず元へ戻し、
+  // 次のモデルやモーションへ差分を持ち越さない。
+  useEffect(() => {
+    moodWeights.current = initialMoodWeights();
+    blink.current = { nextAt: 0, closingUntil: 0 };
+    if (!vrm) {
+      shyPose.current = null;
+      return;
+    }
+    const pose = shyPoseFor(vrm);
+    shyPose.current = pose;
+    return () => {
+      clearShyPose(pose);
+      if (shyPose.current === pose) shyPose.current = null;
+    };
+  }, [vrm]);
 
   // VRMは何もしないとT-pose（腕を真横に伸ばした基本姿勢）のままなので、
   // 自然に立った姿に見えるよう腕を下ろす。normalizedボーンは
@@ -135,18 +231,54 @@ export function VrmModel({
   useFrame((state, delta) => {
     if (!vrm) return;
 
+    const pose = shyPose.current;
+    // モーションの上に足した前フレーム分を一度外してから、今フレームの
+    // AnimationMixerを評価する。これをしないと、静止時に回転が毎フレーム累積する。
+    if (pose) clearShyPose(pose);
+
     if (mixer.current) {
       // 視差効果を減らす設定のときはモーションも止める（姿勢はそのまま維持）
       mixer.current.timeScale = reducedMotion ? 0 : 1;
       mixer.current.update(delta);
     }
-    vrm.update(delta);
+
+    if (pose) {
+      const target = expression === "shy" ? 1 : 0;
+      pose.weight = reducedMotion
+        ? target
+        : THREE.MathUtils.damp(pose.weight, target, 10, delta);
+      const w = pose.weight;
+      // 軽くうつむいて顔をそらし、目だけを下・反対側へ向ける照れ姿勢。
+      applyBoneOffset(
+        pose.head,
+        THREE.MathUtils.degToRad(-9) * w,
+        THREE.MathUtils.degToRad(3.5) * w,
+        THREE.MathUtils.degToRad(-1.5) * w,
+      );
+      applyBoneOffset(
+        pose.leftEye,
+        THREE.MathUtils.degToRad(-7) * w,
+        THREE.MathUtils.degToRad(-3) * w,
+        0,
+      );
+      applyBoneOffset(
+        pose.rightEye,
+        THREE.MathUtils.degToRad(-7) * w,
+        THREE.MathUtils.degToRad(-3) * w,
+        0,
+      );
+    }
 
     const expr = vrm.expressionManager;
     if (expr) {
-      for (const name of MOOD_PRESETS) expr.setValue(name, 0);
-      for (const { preset, weight } of EXPRESSIONS[expression]) {
-        expr.setValue(preset, weight);
+      // 切替時に表情がパッと飛ばないよう、各プリセットの値を短く補間する。
+      for (const name of MOOD_PRESETS) {
+        const target = EXPRESSIONS[expression].find(({ preset }) => preset === name)?.weight ?? 0;
+        const value = reducedMotion
+          ? target
+          : THREE.MathUtils.damp(moodWeights.current[name], target, 14, delta);
+        moodWeights.current[name] = value;
+        expr.setValue(name, value);
       }
 
       // まばたきは気分の表情と独立して動かす
@@ -171,6 +303,9 @@ export function VrmModel({
       const aa = talking ? Math.max(0, Math.sin(talkClock.current * 14)) * 0.6 : 0;
       expr.setValue("aa", aa);
     }
+
+    // normalizedボーンと表情を反映してから、スプリングボーン等を更新する。
+    vrm.update(delta);
 
     // 呼吸とゆらぎ。視差効果を減らす設定のときは止める
     if (!reducedMotion) {
