@@ -67,6 +67,9 @@ function reconcileLook(saved: unknown, schemaVersion: number): Look {
     ...raw,
     outfit: partRef(raw.outfit),
     hair: partRef(raw.hair),
+    iris: partRef(raw.iris),
+    brows: partRef(raw.brows),
+    mouth: partRef(raw.mouth),
   };
 }
 

@@ -12,6 +12,9 @@ function AppearanceLayers({
   outfitUrl,
   outfitDepthScale,
   hairUrl,
+  irisTextureUrl,
+  browsTextureUrl,
+  mouthTextureUrl,
   motionUrl,
   expression,
   talking,
@@ -24,6 +27,9 @@ function AppearanceLayers({
   outfitUrl: string | null;
   outfitDepthScale: number;
   hairUrl: string | null;
+  irisTextureUrl: string | null;
+  browsTextureUrl: string | null;
+  mouthTextureUrl: string | null;
   motionUrl: string;
   expression: Expression;
   talking: boolean;
@@ -74,6 +80,9 @@ function AppearanceLayers({
         orbitControlsRef={orbitControlsRef}
         hideClothes={hasOutfit && outfitReady}
         hideHair={hasHair && hairReady}
+        irisTextureUrl={irisTextureUrl}
+        browsTextureUrl={browsTextureUrl}
+        mouthTextureUrl={mouthTextureUrl}
         syncMotion={hasOutfit || hasHair}
         onMeasured={onBaseBounds}
         onReady={onReady}
@@ -124,6 +133,9 @@ export function VrmCanvas({
   outfitUrl = null,
   outfitDepthScale = 1,
   hairUrl = null,
+  irisTextureUrl = null,
+  browsTextureUrl = null,
+  mouthTextureUrl = null,
   motionUrl,
   expression,
   talking,
@@ -136,6 +148,9 @@ export function VrmCanvas({
   outfitUrl?: string | null;
   outfitDepthScale?: number;
   hairUrl?: string | null;
+  irisTextureUrl?: string | null;
+  browsTextureUrl?: string | null;
+  mouthTextureUrl?: string | null;
   motionUrl: string;
   expression: Expression;
   talking: boolean;
@@ -174,6 +189,9 @@ export function VrmCanvas({
         outfitUrl={outfitUrl}
         outfitDepthScale={outfitDepthScale}
         hairUrl={hairUrl}
+        irisTextureUrl={irisTextureUrl}
+        browsTextureUrl={browsTextureUrl}
+        mouthTextureUrl={mouthTextureUrl}
         motionUrl={motionUrl}
         expression={expression}
         talking={talking}

@@ -110,6 +110,12 @@ function isHairMaterial(material: THREE.Material): boolean {
   return /_HAIR(?:_| \(|$)/.test(material.name);
 }
 
+type TexturedMaterial = THREE.Material & { map: THREE.Texture | null };
+
+function hasTextureMap(material: THREE.Material): material is TexturedMaterial {
+  return "map" in material;
+}
+
 function randomBetween(min: number, max: number): number {
   return min + Math.random() * (max - min);
 }
@@ -129,6 +135,9 @@ export function VrmModel({
   materialMode = "full",
   hideClothes = false,
   hideHair = false,
+  irisTextureUrl = null,
+  browsTextureUrl = null,
+  mouthTextureUrl = null,
   fitCamera = true,
   syncMotion = false,
   modelScale = 1,
@@ -148,6 +157,9 @@ export function VrmModel({
   materialMode?: VrmMaterialMode;
   hideClothes?: boolean;
   hideHair?: boolean;
+  irisTextureUrl?: string | null;
+  browsTextureUrl?: string | null;
+  mouthTextureUrl?: string | null;
   fitCamera?: boolean;
   syncMotion?: boolean;
   modelScale?: number | [number, number, number];
@@ -197,6 +209,60 @@ export function VrmModel({
       }
     });
   }, [hideClothes, hideHair, materialMode, vrm]);
+
+  // VRoid共通UVを使い、顔の形状や表情モーフはベースキャラのまま、
+  // 瞳・眉・口の画像だけを差し替える。読み直し時は必ず元の画像へ戻す。
+  useEffect(() => {
+    if (!vrm) return;
+    const requests = [
+      { url: irisTextureUrl, pattern: /EyeIris_00_EYE/ },
+      { url: browsTextureUrl, pattern: /FaceBrow_00_FACE/ },
+      { url: mouthTextureUrl, pattern: /FaceMouth_00_FACE/ },
+    ].filter((request): request is { url: string; pattern: RegExp } => Boolean(request.url));
+    if (requests.length === 0) return;
+
+    let cancelled = false;
+    const originalMaps = new Map<TexturedMaterial, THREE.Texture | null>();
+    const loadedTextures: THREE.Texture[] = [];
+    const loader = new THREE.TextureLoader();
+
+    for (const request of requests) {
+      const targets: TexturedMaterial[] = [];
+      vrm.scene.traverse((obj) => {
+        if (!(obj instanceof THREE.Mesh)) return;
+        const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const material of materials) {
+          if (request.pattern.test(material.name) && hasTextureMap(material)) {
+            targets.push(material);
+          }
+        }
+      });
+      loader.load(request.url, (texture) => {
+        if (cancelled) {
+          texture.dispose();
+          return;
+        }
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.flipY = false;
+        texture.needsUpdate = true;
+        loadedTextures.push(texture);
+        for (const material of targets) {
+          if (!originalMaps.has(material)) originalMaps.set(material, material.map);
+          material.map = texture;
+          material.needsUpdate = true;
+        }
+      });
+    }
+
+    return () => {
+      cancelled = true;
+      for (const [material, map] of originalMaps) {
+        material.map = map;
+        material.needsUpdate = true;
+      }
+      for (const texture of loadedTextures) texture.dispose();
+    };
+  }, [browsTextureUrl, irisTextureUrl, mouthTextureUrl, vrm]);
 
   // 表情用の頭・目の差分回転はVRMごとに作る。切替時は必ず元へ戻し、
   // 次のモデルやモーションへ差分を持ち越さない。

@@ -23,6 +23,12 @@ export interface Look {
   outfit?: OutfitRef | null;
   /** null/未指定なら自分のVRMに含まれる髪をそのまま使う */
   hair?: OutfitRef | null;
+  /** 顔形状は変えず、別キャラの瞳テクスチャだけを使う */
+  iris?: OutfitRef | null;
+  /** 顔形状は変えず、別キャラの眉テクスチャだけを使う */
+  brows?: OutfitRef | null;
+  /** 顔形状は変えず、別キャラの口テクスチャだけを使う */
+  mouth?: OutfitRef | null;
   scene: string;
   motionId: string;
 }

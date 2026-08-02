@@ -79,6 +79,13 @@ export function CharacterStage({
         }
         outfitDepthScale={outfitDepthScale}
         hairUrl={look.hair ? vrmUrl(look.hair.personaId, look.hair.variantId) : null}
+        irisTextureUrl={look.iris ? `/face-parts/${look.iris.personaId}/iris.png` : null}
+        browsTextureUrl={
+          look.brows ? `/face-parts/${look.brows.personaId}/brows.png` : null
+        }
+        mouthTextureUrl={
+          look.mouth ? `/face-parts/${look.mouth.personaId}/mouth.png` : null
+        }
         motionUrl={vrmaUrl(look.motionId)}
         expression={expression}
         talking={talking}

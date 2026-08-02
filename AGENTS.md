@@ -64,6 +64,8 @@ public/backgrounds/<sceneId>.jpg               背景（未使用でもCSS/デ�
 scripts/generate-vrm-manifest.mjs              public/vrm/を走査してsrc/lib/vrm-manifest.tsを
                                                 自動生成（npm run dev/buildの前に走る）。
                                                 DISPLAY_NAMES定数でファイル名と表示名を分離
+scripts/extract-face-parts.mjs                 代表VRMから瞳・眉・口の画像を
+                                                public/face-parts/へ自動抽出
 src/components/character/
   useVrm.ts        VRM読み込み（GLTFLoader+VRMLoaderPlugin）、dispose管理
   useVrma.ts       VRMA読み込み（VRMAnimationLoaderPlugin）
@@ -128,6 +130,12 @@ src/lib/vrm-manifest.ts  自動生成ファイル（直接編集しない）
     頭の動きとスプリングボーンにも追従する。`Look.hair`に提供元を保存する。
     衣装と髪型を別々の提供元から同時試着すると最大3体のVRMを読むため、これは
     あくまで互換性確認用。正式版では衣装・髪メッシュを事前抽出して軽量化する。
+11. **瞳・眉・口はVRM内で別々のPNGになっており、VRoid間で共通UVを使える。**
+    `extract-face-parts.mjs`で代表VRMの`EyeIris_00_EYE`、`FaceBrow_00_FACE`、
+    `FaceMouth_00_FACE`のbaseColor画像を抽出し、ベースVRMの同名マテリアルへ
+    読み込み後に差し替える。顔形状・表情モーフはベース側のままなので、別顔メッシュを
+    重ねるよりずれにくく、追加VRMも不要。差し替えテクスチャは`sRGB`、`flipY=false`に
+    し、切替・破棄時に元のmapへ必ず戻して追加テクスチャをdisposeする。
 
 ## Mixamo → Blender → VRMA の手順（確立済み）
 
