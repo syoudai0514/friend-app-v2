@@ -100,7 +100,7 @@ export interface ModelBounds {
   head: { x: number; y: number; z: number } | null;
 }
 
-export type VrmMaterialMode = "full" | "onlyClothes" | "onlyHair";
+export type VrmMaterialMode = "full" | "bodyAndClothes" | "onlyClothes" | "onlyHair";
 
 function isClothingMaterial(material: THREE.Material): boolean {
   return /_CLOTH(?:_| \(|$)/.test(material.name);
@@ -110,10 +110,86 @@ function isHairMaterial(material: THREE.Material): boolean {
   return /_HAIR(?:_| \(|$)/.test(material.name);
 }
 
+function isBodyMaterial(material: THREE.Material): boolean {
+  return /Body_00_SKIN/.test(material.name);
+}
+
 type TexturedMaterial = THREE.Material & { map: THREE.Texture | null };
+
+type Rgb = readonly [number, number, number];
 
 function hasTextureMap(material: THREE.Material): material is TexturedMaterial {
   return "map" in material;
+}
+
+function parseHexColor(color: string): Rgb | null {
+  const hex = color.replace(/^#/, "");
+  if (!/^[0-9a-f]{6}$/i.test(hex)) return null;
+  const value = Number.parseInt(hex, 16);
+  return [(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff];
+}
+
+function isSkinPixel(r: number, g: number, b: number, source: Rgb): boolean {
+  // 白い靴下や黒い下着は残し、元の肌色と同じ色相を持つ部分だけを対象にする。
+  // 明暗はテクスチャ側の陰影として許容し、RGBの比率で肌かどうかを判定する。
+  if (r < 65 || g < 45 || b < 35 || r - g < 4 || g - b < 2) return false;
+  const pixelTotal = r + g + b;
+  const sourceTotal = source[0] + source[1] + source[2];
+  const chromaDistance =
+    Math.abs(r / pixelTotal - source[0] / sourceTotal) +
+    Math.abs(g / pixelTotal - source[1] / sourceTotal) +
+    Math.abs(b / pixelTotal - source[2] / sourceTotal);
+  return chromaDistance < 0.075;
+}
+
+function recolorBodyTexture(
+  original: THREE.Texture,
+  source: Rgb,
+  target: Rgb,
+): THREE.Texture | null {
+  const image = original.image as CanvasImageSource | undefined;
+  const dimensions = image as { width?: number; height?: number } | undefined;
+  const width = dimensions?.width ?? 0;
+  const height = dimensions?.height ?? 0;
+  if (!image || width <= 0 || height <= 0) return null;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) return null;
+
+  try {
+    context.drawImage(image, 0, 0, width, height);
+    const imageData = context.getImageData(0, 0, width, height);
+    const pixels = imageData.data;
+    const ratios: Rgb = [target[0] / source[0], target[1] / source[1], target[2] / source[2]];
+    for (let index = 0; index < pixels.length; index += 4) {
+      if (
+        pixels[index + 3] > 0 &&
+        isSkinPixel(pixels[index], pixels[index + 1], pixels[index + 2], source)
+      ) {
+        pixels[index] = Math.min(255, Math.round(pixels[index] * ratios[0]));
+        pixels[index + 1] = Math.min(255, Math.round(pixels[index + 1] * ratios[1]));
+        pixels[index + 2] = Math.min(255, Math.round(pixels[index + 2] * ratios[2]));
+      }
+    }
+    context.putImageData(imageData, 0, 0);
+  } catch {
+    return null;
+  }
+
+  const recolored = new THREE.CanvasTexture(canvas);
+  recolored.name = `${original.name || "body"}-skin-recolored`;
+  recolored.colorSpace = original.colorSpace;
+  recolored.flipY = original.flipY;
+  recolored.wrapS = original.wrapS;
+  recolored.wrapT = original.wrapT;
+  recolored.magFilter = original.magFilter;
+  recolored.minFilter = original.minFilter;
+  recolored.generateMipmaps = original.generateMipmaps;
+  recolored.needsUpdate = true;
+  return recolored;
 }
 
 function randomBetween(min: number, max: number): number {
@@ -134,11 +210,13 @@ export function VrmModel({
   orbitControlsRef,
   materialMode = "full",
   hideClothes = false,
+  hideBody = false,
   hideHair = false,
   irisTextureUrl = null,
   browsTextureUrl = null,
   mouthTextureUrl = null,
   bodySkinColor = null,
+  bodySkinSourceColor = null,
   fitCamera = true,
   syncMotion = false,
   modelScale = 1,
@@ -157,11 +235,13 @@ export function VrmModel({
   orbitControlsRef: RefObject<OrbitControlsImpl | null>;
   materialMode?: VrmMaterialMode;
   hideClothes?: boolean;
+  hideBody?: boolean;
   hideHair?: boolean;
   irisTextureUrl?: string | null;
   browsTextureUrl?: string | null;
   mouthTextureUrl?: string | null;
   bodySkinColor?: string | null;
+  bodySkinSourceColor?: string | null;
   fitCamera?: boolean;
   syncMotion?: boolean;
   modelScale?: number | [number, number, number];
@@ -201,44 +281,47 @@ export function VrmModel({
       const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
       for (const material of materials) {
         const clothing = isClothingMaterial(material);
+        const body = isBodyMaterial(material);
         const hair = isHairMaterial(material);
-        material.visible =
-          materialMode === "onlyClothes"
-            ? clothing
-            : materialMode === "onlyHair"
-              ? hair
-              : !(hideClothes && clothing) && !(hideHair && hair);
+        if (materialMode === "bodyAndClothes") {
+          material.visible = body || clothing;
+        } else if (materialMode === "onlyClothes") {
+          material.visible = clothing;
+        } else if (materialMode === "onlyHair") {
+          material.visible = hair;
+        } else {
+          material.visible =
+            !(hideClothes && clothing) && !(hideBody && body) && !(hideHair && hair);
+        }
       }
     });
-  }, [hideClothes, hideHair, materialMode, vrm]);
+  }, [hideBody, hideClothes, hideHair, materialMode, vrm]);
 
-  // VRoidは衣装で隠れる下着・タイツなどをBodyの肌画像へ焼き込むことがある。
-  // そのまま別衣装へ替えると黒い領域が胸や脚に露出するため、着せ替え中だけ
-  // Bodyをキャラ固有の無地の肌色へ置き換える。顔は別マテリアルなので影響しない。
+  // 衣装側のBody形状を一緒に使うことで、VRoidの書き出し時に省かれた身体の面を補う。
+  // Body画像に焼き込まれた下着・靴下・陰影は残し、肌に当たる色だけ着る側へ合わせる。
   useEffect(() => {
-    if (!vrm || !bodySkinColor) return;
-    const hex = bodySkinColor.replace(/^#/, "");
-    if (!/^[0-9a-f]{6}$/i.test(hex)) return;
-    const value = Number.parseInt(hex, 16);
-    const texture = new THREE.DataTexture(
-      new Uint8Array([(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff, 0xff]),
-      1,
-      1,
-      THREE.RGBAFormat,
-    );
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.needsUpdate = true;
+    if (!vrm || !bodySkinColor || !bodySkinSourceColor) return;
+    const source = parseHexColor(bodySkinSourceColor);
+    const target = parseHexColor(bodySkinColor);
+    if (!source || !target || source.every((channel, index) => channel === target[index])) return;
 
     const originalMaps = new Map<TexturedMaterial, THREE.Texture | null>();
+    const recoloredMaps = new Map<THREE.Texture, THREE.Texture>();
     vrm.scene.traverse((obj) => {
       if (!(obj instanceof THREE.Mesh)) return;
       const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
       for (const material of materials) {
-        if (/Body_00_SKIN/.test(material.name) && hasTextureMap(material)) {
-          originalMaps.set(material, material.map);
-          material.map = texture;
-          material.needsUpdate = true;
+        if (!isBodyMaterial(material) || !hasTextureMap(material) || !material.map) continue;
+        const original = material.map;
+        let recolored = recoloredMaps.get(original);
+        if (!recolored) {
+          recolored = recolorBodyTexture(original, source, target) ?? undefined;
+          if (!recolored) continue;
+          recoloredMaps.set(original, recolored);
         }
+        originalMaps.set(material, original);
+        material.map = recolored;
+        material.needsUpdate = true;
       }
     });
 
@@ -247,9 +330,9 @@ export function VrmModel({
         material.map = map;
         material.needsUpdate = true;
       }
-      texture.dispose();
+      for (const texture of recoloredMaps.values()) texture.dispose();
     };
-  }, [bodySkinColor, vrm]);
+  }, [bodySkinColor, bodySkinSourceColor, vrm]);
 
   // VRoid共通UVを使い、顔の形状や表情モーフはベースキャラのまま、
   // 瞳・眉・口の画像だけを差し替える。読み直し時は必ず元の画像へ戻す。

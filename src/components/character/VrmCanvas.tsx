@@ -16,6 +16,7 @@ function AppearanceLayers({
   browsTextureUrl,
   mouthTextureUrl,
   bodySkinColor,
+  bodySkinSourceColor,
   motionUrl,
   expression,
   talking,
@@ -32,6 +33,7 @@ function AppearanceLayers({
   browsTextureUrl: string | null;
   mouthTextureUrl: string | null;
   bodySkinColor: string | null;
+  bodySkinSourceColor: string | null;
   motionUrl: string;
   expression: Expression;
   talking: boolean;
@@ -81,11 +83,11 @@ function AppearanceLayers({
         reducedMotion={reducedMotion}
         orbitControlsRef={orbitControlsRef}
         hideClothes={hasOutfit && outfitReady}
+        hideBody={hasOutfit && outfitReady}
         hideHair={hasHair && hairReady}
         irisTextureUrl={irisTextureUrl}
         browsTextureUrl={browsTextureUrl}
         mouthTextureUrl={mouthTextureUrl}
-        bodySkinColor={hasOutfit && outfitReady ? bodySkinColor : null}
         syncMotion={hasOutfit || hasHair}
         onMeasured={onBaseBounds}
         onReady={onReady}
@@ -99,7 +101,9 @@ function AppearanceLayers({
           talking={false}
           reducedMotion={reducedMotion}
           orbitControlsRef={orbitControlsRef}
-          materialMode="onlyClothes"
+          materialMode="bodyAndClothes"
+          bodySkinColor={bodySkinColor}
+          bodySkinSourceColor={bodySkinSourceColor}
           fitCamera={false}
           syncMotion
           modelScale={[outfitScale, outfitScale, outfitScale * outfitDepthScale]}
@@ -140,6 +144,7 @@ export function VrmCanvas({
   browsTextureUrl = null,
   mouthTextureUrl = null,
   bodySkinColor = null,
+  bodySkinSourceColor = null,
   motionUrl,
   expression,
   talking,
@@ -156,6 +161,7 @@ export function VrmCanvas({
   browsTextureUrl?: string | null;
   mouthTextureUrl?: string | null;
   bodySkinColor?: string | null;
+  bodySkinSourceColor?: string | null;
   motionUrl: string;
   expression: Expression;
   talking: boolean;
@@ -198,6 +204,7 @@ export function VrmCanvas({
         browsTextureUrl={browsTextureUrl}
         mouthTextureUrl={mouthTextureUrl}
         bodySkinColor={bodySkinColor}
+        bodySkinSourceColor={bodySkinSourceColor}
         motionUrl={motionUrl}
         expression={expression}
         talking={talking}
