@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
+import { backgroundUrl } from "@/lib/backgrounds";
 import type { Expression } from "@/lib/expressions";
 import type { Look } from "@/lib/types";
 import { posterUrl, vrmaUrl, vrmUrl } from "@/lib/vrm-assets";
@@ -98,6 +99,15 @@ export function CharacterStage({
 
   return (
     <div className="absolute inset-0 bg-[#12121a]" style={{ bottom: lift }}>
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 bg-cover bg-center transition-[background-image] duration-300"
+        style={{ backgroundImage: `url(${backgroundUrl(look.scene)})` }}
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/10 via-black/5 to-black/30"
+      />
       <VrmCanvas
         url={vrmUrl(personaId, look.variantId)}
         outfitUrl={

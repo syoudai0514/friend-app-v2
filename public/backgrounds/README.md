@@ -1,22 +1,19 @@
 # 背景画像の置き場所
 
-ここに画像を置くと、CSSで描いた背景の代わりにその画像が使われます。
-**置いてリロードするだけで反映されます。**
+背景選択で使う画像を置く場所です。アプリは各背景IDの `.webp` を読み込みます。
 
 ## 置き方
 
 ```
-public/backgrounds/<背景ID>.jpg
+public/backgrounds/<背景ID>.webp
 ```
 
 例:
 
 ```
-public/backgrounds/poolside.jpg
-public/backgrounds/night.png
+public/backgrounds/poolside.webp
+public/backgrounds/night.webp
 ```
-
-拡張子は `.png` `.jpg` `.webp` `.avif` `.gif` が使えます。
 
 ## 背景ID
 
@@ -36,5 +33,5 @@ public/backgrounds/night.png
 ## コツ
 
 - **縦長**（例 1200×2000 くらい）だとスマホの画面に合います。横長でも中央を切り出して表示します
-- アプリ側で自動的に軽くぼかすので、細かい描き込みは不要です。むしろキャラが引き立ちます
+- キャラが中央に立つので、中央は少し余白を残すと見やすくなります
 - 明るすぎるとセリフの吹き出しが読みづらくなるので、少し落ち着いた明るさが扱いやすいです

@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { CharacterStage } from "@/components/character/CharacterStage";
 import { RarityBadge } from "@/components/ui";
+import { backgroundUrl } from "@/lib/backgrounds";
 import { MOTION, SCENE } from "@/lib/catalog";
 import { PRESETS } from "@/lib/personas";
 import { useStore } from "@/lib/store";
@@ -415,7 +416,16 @@ export default function ClosetPage() {
                                   selected ? "border-pink-cta" : "border-transparent"
                                 }`}
                   >
-                    <div className="aspect-square w-full" />
+                    <div
+                      className={`aspect-square w-full ${
+                        tabId === "scene" ? "bg-cover bg-center" : ""
+                      }`}
+                      style={
+                        tabId === "scene"
+                          ? { backgroundImage: `url(${backgroundUrl(opt.id)})` }
+                          : undefined
+                      }
+                    />
                     <span className="absolute top-0.5 right-1">
                       <RarityBadge rarity={opt.rarity} />
                     </span>
