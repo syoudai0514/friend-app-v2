@@ -94,6 +94,28 @@ const BLINK_MIN_MS = 2600;
 const BLINK_MAX_MS = 6200;
 const BLINK_CLOSE_MS = 130;
 
+export interface ModelBounds {
+  height: number;
+  minY: number;
+  head: { x: number; y: number; z: number } | null;
+}
+
+export type VrmMaterialMode = "full" | "onlyClothes" | "onlyHair";
+
+function isClothingMaterial(material: THREE.Material): boolean {
+  return /_CLOTH(?:_| \(|$)/.test(material.name);
+}
+
+function isHairMaterial(material: THREE.Material): boolean {
+  return /_HAIR(?:_| \(|$)/.test(material.name);
+}
+
+type TexturedMaterial = THREE.Material & { map: THREE.Texture | null };
+
+function hasTextureMap(material: THREE.Material): material is TexturedMaterial {
+  return "map" in material;
+}
+
 function randomBetween(min: number, max: number): number {
   return min + Math.random() * (max - min);
 }
@@ -110,6 +132,19 @@ export function VrmModel({
   talking,
   reducedMotion,
   orbitControlsRef,
+  materialMode = "full",
+  hideClothes = false,
+  hideHair = false,
+  irisTextureUrl = null,
+  browsTextureUrl = null,
+  mouthTextureUrl = null,
+  fitCamera = true,
+  syncMotion = false,
+  modelScale = 1,
+  modelOffsetX = 0,
+  modelOffsetY = 0,
+  modelOffsetZ = 0,
+  onMeasured,
   onReady,
   onError,
 }: {
@@ -119,6 +154,19 @@ export function VrmModel({
   talking: boolean;
   reducedMotion: boolean;
   orbitControlsRef: RefObject<OrbitControlsImpl | null>;
+  materialMode?: VrmMaterialMode;
+  hideClothes?: boolean;
+  hideHair?: boolean;
+  irisTextureUrl?: string | null;
+  browsTextureUrl?: string | null;
+  mouthTextureUrl?: string | null;
+  fitCamera?: boolean;
+  syncMotion?: boolean;
+  modelScale?: number | [number, number, number];
+  modelOffsetX?: number;
+  modelOffsetY?: number;
+  modelOffsetZ?: number;
+  onMeasured?: (bounds: ModelBounds) => void;
   onReady?: () => void;
   onError?: () => void;
 }) {
@@ -128,6 +176,8 @@ export function VrmModel({
   const blink = useRef({ nextAt: 0, closingUntil: 0 });
   const talkClock = useRef(0);
   const mixer = useRef<THREE.AnimationMixer | null>(null);
+  const activeAction = useRef<THREE.AnimationAction | null>(null);
+  const clipDuration = useRef(0);
   const moodWeights = useRef(initialMoodWeights());
   const shyPose = useRef<ShyPose | null>(null);
 
@@ -138,6 +188,81 @@ export function VrmModel({
   useEffect(() => {
     if (error) onError?.();
   }, [error, onError]);
+
+  // VRoidのマテリアル名にある _CLOTH / _HAIR を境界として、ベース側の
+  // パーツを隠したり、提供元側の対象パーツだけを残したりする。
+  // アウトライン材も元の名前を含むので同じ判定で揃う。
+  useEffect(() => {
+    if (!vrm) return;
+    vrm.scene.traverse((obj) => {
+      if (!(obj instanceof THREE.Mesh)) return;
+      const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+      for (const material of materials) {
+        const clothing = isClothingMaterial(material);
+        const hair = isHairMaterial(material);
+        material.visible =
+          materialMode === "onlyClothes"
+            ? clothing
+            : materialMode === "onlyHair"
+              ? hair
+              : !(hideClothes && clothing) && !(hideHair && hair);
+      }
+    });
+  }, [hideClothes, hideHair, materialMode, vrm]);
+
+  // VRoid共通UVを使い、顔の形状や表情モーフはベースキャラのまま、
+  // 瞳・眉・口の画像だけを差し替える。読み直し時は必ず元の画像へ戻す。
+  useEffect(() => {
+    if (!vrm) return;
+    const requests = [
+      { url: irisTextureUrl, pattern: /EyeIris_00_EYE/ },
+      { url: browsTextureUrl, pattern: /FaceBrow_00_FACE/ },
+      { url: mouthTextureUrl, pattern: /FaceMouth_00_FACE/ },
+    ].filter((request): request is { url: string; pattern: RegExp } => Boolean(request.url));
+    if (requests.length === 0) return;
+
+    let cancelled = false;
+    const originalMaps = new Map<TexturedMaterial, THREE.Texture | null>();
+    const loadedTextures: THREE.Texture[] = [];
+    const loader = new THREE.TextureLoader();
+
+    for (const request of requests) {
+      const targets: TexturedMaterial[] = [];
+      vrm.scene.traverse((obj) => {
+        if (!(obj instanceof THREE.Mesh)) return;
+        const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const material of materials) {
+          if (request.pattern.test(material.name) && hasTextureMap(material)) {
+            targets.push(material);
+          }
+        }
+      });
+      loader.load(request.url, (texture) => {
+        if (cancelled) {
+          texture.dispose();
+          return;
+        }
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.flipY = false;
+        texture.needsUpdate = true;
+        loadedTextures.push(texture);
+        for (const material of targets) {
+          if (!originalMaps.has(material)) originalMaps.set(material, material.map);
+          material.map = texture;
+          material.needsUpdate = true;
+        }
+      });
+    }
+
+    return () => {
+      cancelled = true;
+      for (const [material, map] of originalMaps) {
+        material.map = map;
+        material.needsUpdate = true;
+      }
+      for (const texture of loadedTextures) texture.dispose();
+    };
+  }, [browsTextureUrl, irisTextureUrl, mouthTextureUrl, vrm]);
 
   // 表情用の頭・目の差分回転はVRMごとに作る。切替時は必ず元へ戻し、
   // 次のモデルやモーションへ差分を持ち越さない。
@@ -175,11 +300,13 @@ export function VrmModel({
   useEffect(() => {
     if (!vrm || !vrmAnimation) {
       mixer.current = null;
+      activeAction.current = null;
+      clipDuration.current = 0;
       return;
     }
     const clip = createVRMAnimationClip(vrmAnimation, vrm);
     const m = new THREE.AnimationMixer(vrm.scene);
-    m.clipAction(clip).setLoop(THREE.LoopRepeat, Infinity).play();
+    const action = m.clipAction(clip).setLoop(THREE.LoopRepeat, Infinity).play();
 
     // ループの継ぎ目でポーズが不連続に飛ぶと、髪などのスプリングボーン物理が
     // その勢いを拾って一瞬暴れることがある。ループのたびに物理状態を
@@ -188,10 +315,14 @@ export function VrmModel({
     m.addEventListener("loop", onLoop);
 
     mixer.current = m;
+    activeAction.current = action;
+    clipDuration.current = clip.duration;
     return () => {
       m.removeEventListener("loop", onLoop);
       m.stopAllAction();
       mixer.current = null;
+      activeAction.current = null;
+      clipDuration.current = 0;
     };
   }, [vrm, vrmAnimation]);
 
@@ -204,6 +335,17 @@ export function VrmModel({
     const box = new THREE.Box3().setFromObject(vrm.scene);
     const height = box.max.y - box.min.y;
     if (!Number.isFinite(height) || height <= 0) return;
+
+    const headNode = vrm.humanoid.getRawBoneNode("head");
+    const headPosition = headNode ? headNode.getWorldPosition(new THREE.Vector3()) : null;
+    onMeasured?.({
+      height,
+      minY: box.min.y,
+      head: headPosition
+        ? { x: headPosition.x, y: headPosition.y, z: headPosition.z }
+        : null,
+    });
+    if (!fitCamera) return;
 
     const centerX = (box.min.x + box.max.x) / 2;
     const centerZ = (box.min.z + box.max.z) / 2;
@@ -226,7 +368,7 @@ export function VrmModel({
       // これで「↺」ボタン(reset)がこの初期位置に戻るようになる
       controls.saveState();
     }
-  }, [vrm, camera, orbitControlsRef]);
+  }, [vrm, camera, fitCamera, onMeasured, orbitControlsRef]);
 
   useFrame((state, delta) => {
     if (!vrm) return;
@@ -239,7 +381,14 @@ export function VrmModel({
     if (mixer.current) {
       // 視差効果を減らす設定のときはモーションも止める（姿勢はそのまま維持）
       mixer.current.timeScale = reducedMotion ? 0 : 1;
-      mixer.current.update(delta);
+      if (syncMotion && activeAction.current && clipDuration.current > 0) {
+        activeAction.current.time = reducedMotion
+          ? 0
+          : state.clock.elapsedTime % clipDuration.current;
+        mixer.current.update(0);
+      } else {
+        mixer.current.update(delta);
+      }
     }
 
     if (pose) {
@@ -310,14 +459,18 @@ export function VrmModel({
     // 呼吸とゆらぎ。視差効果を減らす設定のときは止める
     if (!reducedMotion) {
       const t = state.clock.elapsedTime;
-      vrm.scene.position.y = Math.sin(t * 1.5) * 0.006;
+      vrm.scene.position.x = modelOffsetX;
+      vrm.scene.position.y = modelOffsetY + Math.sin(t * 1.5) * 0.006;
+      vrm.scene.position.z = modelOffsetZ;
       vrm.scene.rotation.z = Math.sin(t * 0.85) * 0.006;
     } else {
-      vrm.scene.position.y = 0;
+      vrm.scene.position.x = modelOffsetX;
+      vrm.scene.position.y = modelOffsetY;
+      vrm.scene.position.z = modelOffsetZ;
       vrm.scene.rotation.z = 0;
     }
   });
 
   if (!vrm) return null;
-  return <primitive object={vrm.scene} />;
+  return <primitive object={vrm.scene} scale={modelScale} />;
 }

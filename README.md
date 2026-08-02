@@ -1,6 +1,6 @@
-# こいびとアプリ v2
+# フレンド v2
 
-自分だけの恋人と話せる、スマホ向けのWebアプリ。[friend-app（v1）](https://github.com/syoudai0514/friend-app)から、
+友達と話せる、スマホ向けのWebアプリ。[friend-app（v1）](https://github.com/syoudai0514/friend-app)から、
 キャラ表示を1枚絵PNG／SVGアバターから**3Dアバター（VRM 1.0）**へ作り替えている版です。
 
 会話は **Google Gemini の無料枠** で動きます。会話・記憶・好感度まわりのしくみはv1から

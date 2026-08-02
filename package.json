@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "assets": "node scripts/generate-vrm-manifest.mjs",
+    "assets": "node scripts/generate-vrm-manifest.mjs && node scripts/extract-face-parts.mjs",
     "predev": "npm run assets",
     "dev": "next dev",
     "prebuild": "npm run assets",

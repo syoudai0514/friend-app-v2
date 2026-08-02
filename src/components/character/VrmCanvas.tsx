@@ -2,13 +2,19 @@
 
 import { OrbitControls } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
-import { useState, type RefObject } from "react";
+import { useCallback, useState, type RefObject } from "react";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import type { Expression } from "@/lib/expressions";
-import { VrmModel } from "./VrmModel";
+import { VrmModel, type ModelBounds } from "./VrmModel";
 
-export function VrmCanvas({
+function AppearanceLayers({
   url,
+  outfitUrl,
+  outfitDepthScale,
+  hairUrl,
+  irisTextureUrl,
+  browsTextureUrl,
+  mouthTextureUrl,
   motionUrl,
   expression,
   talking,
@@ -18,6 +24,133 @@ export function VrmCanvas({
   onError,
 }: {
   url: string;
+  outfitUrl: string | null;
+  outfitDepthScale: number;
+  hairUrl: string | null;
+  irisTextureUrl: string | null;
+  browsTextureUrl: string | null;
+  mouthTextureUrl: string | null;
+  motionUrl: string;
+  expression: Expression;
+  talking: boolean;
+  reducedMotion: boolean;
+  orbitControlsRef: RefObject<OrbitControlsImpl | null>;
+  onReady?: () => void;
+  onError?: () => void;
+}) {
+  const [outfitReady, setOutfitReady] = useState(false);
+  const [hairReady, setHairReady] = useState(false);
+  const [baseBounds, setBaseBounds] = useState<ModelBounds | null>(null);
+  const [outfitBounds, setOutfitBounds] = useState<ModelBounds | null>(null);
+  const [hairBounds, setHairBounds] = useState<ModelBounds | null>(null);
+
+  const onBaseBounds = useCallback((bounds: ModelBounds) => setBaseBounds(bounds), []);
+  const onOutfitBounds = useCallback((bounds: ModelBounds) => setOutfitBounds(bounds), []);
+  const onHairBounds = useCallback((bounds: ModelBounds) => setHairBounds(bounds), []);
+
+  const outfitScale =
+    baseBounds && outfitBounds && outfitBounds.height > 0
+      ? baseBounds.height / outfitBounds.height
+      : 1;
+  const outfitOffsetY =
+    baseBounds && outfitBounds ? baseBounds.minY - outfitBounds.minY * outfitScale : 0;
+  const hasOutfit = Boolean(outfitUrl);
+  const hasHair = Boolean(hairUrl);
+  const hairScale =
+    baseBounds && hairBounds && hairBounds.height > 0 ? baseBounds.height / hairBounds.height : 1;
+  const canAlignHeads = Boolean(baseBounds?.head && hairBounds?.head);
+  const hairOffsetX = canAlignHeads
+    ? baseBounds!.head!.x - hairBounds!.head!.x * hairScale
+    : 0;
+  const hairOffsetY = canAlignHeads
+    ? baseBounds!.head!.y - hairBounds!.head!.y * hairScale
+    : 0;
+  const hairOffsetZ = canAlignHeads
+    ? baseBounds!.head!.z - hairBounds!.head!.z * hairScale
+    : 0;
+
+  return (
+    <>
+      <VrmModel
+        url={url}
+        motionUrl={motionUrl}
+        expression={expression}
+        talking={talking}
+        reducedMotion={reducedMotion}
+        orbitControlsRef={orbitControlsRef}
+        hideClothes={hasOutfit && outfitReady}
+        hideHair={hasHair && hairReady}
+        irisTextureUrl={irisTextureUrl}
+        browsTextureUrl={browsTextureUrl}
+        mouthTextureUrl={mouthTextureUrl}
+        syncMotion={hasOutfit || hasHair}
+        onMeasured={onBaseBounds}
+        onReady={onReady}
+        onError={onError}
+      />
+      {outfitUrl && (
+        <VrmModel
+          url={outfitUrl}
+          motionUrl={motionUrl}
+          expression="normal"
+          talking={false}
+          reducedMotion={reducedMotion}
+          orbitControlsRef={orbitControlsRef}
+          materialMode="onlyClothes"
+          fitCamera={false}
+          syncMotion
+          modelScale={[outfitScale, outfitScale, outfitScale * outfitDepthScale]}
+          modelOffsetY={outfitOffsetY}
+          onMeasured={onOutfitBounds}
+          onReady={() => setOutfitReady(true)}
+        />
+      )}
+      {hairUrl && (
+        <VrmModel
+          url={hairUrl}
+          motionUrl={motionUrl}
+          expression="normal"
+          talking={false}
+          reducedMotion={reducedMotion}
+          orbitControlsRef={orbitControlsRef}
+          materialMode="onlyHair"
+          fitCamera={false}
+          syncMotion
+          modelScale={hairScale}
+          modelOffsetX={hairOffsetX}
+          modelOffsetY={hairOffsetY}
+          modelOffsetZ={hairOffsetZ}
+          onMeasured={onHairBounds}
+          onReady={() => setHairReady(true)}
+        />
+      )}
+    </>
+  );
+}
+
+export function VrmCanvas({
+  url,
+  outfitUrl = null,
+  outfitDepthScale = 1,
+  hairUrl = null,
+  irisTextureUrl = null,
+  browsTextureUrl = null,
+  mouthTextureUrl = null,
+  motionUrl,
+  expression,
+  talking,
+  reducedMotion,
+  orbitControlsRef,
+  onReady,
+  onError,
+}: {
+  url: string;
+  outfitUrl?: string | null;
+  outfitDepthScale?: number;
+  hairUrl?: string | null;
+  irisTextureUrl?: string | null;
+  browsTextureUrl?: string | null;
+  mouthTextureUrl?: string | null;
   motionUrl: string;
   expression: Expression;
   talking: boolean;
@@ -50,8 +183,15 @@ export function VrmCanvas({
     >
       <ambientLight intensity={0.95} />
       <directionalLight position={[0.5, 1, 0.8]} intensity={0.55} />
-      <VrmModel
+      <AppearanceLayers
+        key={`${outfitUrl ?? "base-only"}|${hairUrl ?? "base-hair"}`}
         url={url}
+        outfitUrl={outfitUrl}
+        outfitDepthScale={outfitDepthScale}
+        hairUrl={hairUrl}
+        irisTextureUrl={irisTextureUrl}
+        browsTextureUrl={browsTextureUrl}
+        mouthTextureUrl={mouthTextureUrl}
         motionUrl={motionUrl}
         expression={expression}
         talking={talking}

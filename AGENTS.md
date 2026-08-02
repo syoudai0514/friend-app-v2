@@ -34,7 +34,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 | 1 | WebGL実機検証（サンプルVRM表示） | ✅完了 |
 | 2 | 1キャラ本番（表情7種・まばたき・poster fallback） | ほぼ完了。実機での最終確認は都度お願いする |
 | 3 | モーション（Mixamo→Blender→VRMA） | 進行中。6種類導入済み（下記） |
-| 4 | 衣装/髪型（衣装ごとに別VRM） | 進行中。アイミー3種・しずく3種 |
+| 4 | 衣装/髪型（衣装ごとに別VRM） | 進行中。アイミー3種・しずく4種。別キャラの衣装・髪型試着版あり |
 | 5 | 残りキャラ移行＋セーブ移行UI | 未着手（なぎ・ひなた・れなにVRM未着手） |
 
 ## キャラクターとアセットの現状
@@ -64,6 +64,8 @@ public/backgrounds/<sceneId>.jpg               背景（未使用でもCSS/デ�
 scripts/generate-vrm-manifest.mjs              public/vrm/を走査してsrc/lib/vrm-manifest.tsを
                                                 自動生成（npm run dev/buildの前に走る）。
                                                 DISPLAY_NAMES定数でファイル名と表示名を分離
+scripts/extract-face-parts.mjs                 代表VRMから瞳・眉・口の画像を
+                                                public/face-parts/へ自動抽出
 src/components/character/
   useVrm.ts        VRM読み込み（GLTFLoader+VRMLoaderPlugin）、dispose管理
   useVrma.ts       VRMA読み込み（VRMAnimationLoaderPlugin）
@@ -115,6 +117,25 @@ src/lib/vrm-manifest.ts  自動生成ファイル（直接編集しない）
    合成し、normalizedの頭・両目へ「うつむき＋視線そらし」の差分回転を重ねる。
    差分は毎フレーム、AnimationMixer評価前に前回分を外してから付け直すこと。
    外さず加算すると、静止ポーズで首や目の回転が累積して破綻する。
+9. **別キャラの衣装は、VRoidの`_CLOTH`マテリアルを境界に服だけ表示できる。**
+   `VrmCanvas.tsx`でベースVRMと衣装提供元VRMを重ね、両方に同じVRMAの時刻を
+   評価する。身長比で提供元を自動拡縮し、足元の高さも合わせる。ドレス程度なら
+   顔・髪・肌をベースのまま移せることを確認済み。ただし、現状はVRMを2体読むため
+   GPU/メモリ負荷がほぼ2体分あり、体型差の大きい服では肌の突き抜けや裾のずれが
+   残る。正式版ではBlender等で衣装メッシュを共通素体へ合わせて書き出し、服ごとの
+   ボディマスクも持たせるのが本筋。`Look.outfit`はこの試着元を保存する。
+10. **髪型も`_HAIR`マテリアルを境界に分離できる。** ベース側の髪を隠し、
+    提供元VRMでは髪だけを表示する。全身の身長比で拡縮したうえで、両VRMの
+    `head`ボーンのワールド座標差を使って頭位置を合わせる。VRMAの時刻を同期すれば
+    頭の動きとスプリングボーンにも追従する。`Look.hair`に提供元を保存する。
+    衣装と髪型を別々の提供元から同時試着すると最大3体のVRMを読むため、これは
+    あくまで互換性確認用。正式版では衣装・髪メッシュを事前抽出して軽量化する。
+11. **瞳・眉・口はVRM内で別々のPNGになっており、VRoid間で共通UVを使える。**
+    `extract-face-parts.mjs`で代表VRMの`EyeIris_00_EYE`、`FaceBrow_00_FACE`、
+    `FaceMouth_00_FACE`のbaseColor画像を抽出し、ベースVRMの同名マテリアルへ
+    読み込み後に差し替える。顔形状・表情モーフはベース側のままなので、別顔メッシュを
+    重ねるよりずれにくく、追加VRMも不要。差し替えテクスチャは`sRGB`、`flipY=false`に
+    し、切替・破棄時に元のmapへ必ず戻して追加テクスチャをdisposeする。
 
 ## Mixamo → Blender → VRMA の手順（確立済み）
 

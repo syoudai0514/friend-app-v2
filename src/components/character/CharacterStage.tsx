@@ -54,15 +54,38 @@ export function CharacterStage({
   useEffect(() => {
     setVrmStatus("loading");
     setPosterFailed(false);
-  }, [personaId, look.variantId]);
+  }, [
+    personaId,
+    look.variantId,
+    look.outfit?.personaId,
+    look.outfit?.variantId,
+    look.hair?.personaId,
+    look.hair?.variantId,
+  ]);
 
   const showPoster = vrmStatus === "error" && !posterFailed;
   const showErrorText = vrmStatus === "error" && posterFailed;
+  // しずくの私服はアイミーより胸まわりが薄い体型に合わせて作られている。
+  // キャラ間試着のときだけ前後へ少し膨らませ、首元から肌が突き抜けるのを抑える。
+  const outfitDepthScale =
+    look.outfit?.personaId === "shizuku" && look.outfit.variantId === "casual" ? 1.1 : 1;
 
   return (
     <div className="absolute inset-0 bg-[#12121a]" style={{ bottom: lift }}>
       <VrmCanvas
         url={vrmUrl(personaId, look.variantId)}
+        outfitUrl={
+          look.outfit ? vrmUrl(look.outfit.personaId, look.outfit.variantId) : null
+        }
+        outfitDepthScale={outfitDepthScale}
+        hairUrl={look.hair ? vrmUrl(look.hair.personaId, look.hair.variantId) : null}
+        irisTextureUrl={look.iris ? `/face-parts/${look.iris.personaId}/iris.png` : null}
+        browsTextureUrl={
+          look.brows ? `/face-parts/${look.brows.personaId}/brows.png` : null
+        }
+        mouthTextureUrl={
+          look.mouth ? `/face-parts/${look.mouth.personaId}/mouth.png` : null
+        }
         motionUrl={vrmaUrl(look.motionId)}
         expression={expression}
         talking={talking}
