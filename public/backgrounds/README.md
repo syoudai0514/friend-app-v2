@@ -21,6 +21,7 @@ public/backgrounds/night.webp
 |---|---|
 | `room` | 自分の部屋 |
 | `bed` | ベッドの上 |
+| `bed-man` | ベッド（男性） |
 | `poolside` | プールサイド |
 | `arcade` | ゲームセンター |
 | `office` | オフィス |
