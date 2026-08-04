@@ -81,6 +81,11 @@ export function useVrm(url: string | null): UseVrmResult {
         }
         VRMUtils.removeUnnecessaryVertices(gltf.scene);
         VRMUtils.removeUnnecessaryJoints(gltf.scene);
+        // VRM0.0（VRoidの旧エクスポート設定など）はモデルの正面が180度逆。
+        // VRM1.0との混在を前提にしているため、読み込み時に一度だけ揃える
+        if (loaded.meta?.metaVersion === "0") {
+          VRMUtils.rotateVRM0(loaded);
+        }
 
         // 読み込み時に顔・目・髪の描画方法を一度決め、以後は角度や姿勢に
         // 左右されないよう固定する。これらは片面描画のことが多く、自由に

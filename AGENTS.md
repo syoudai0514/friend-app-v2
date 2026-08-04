@@ -35,7 +35,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 | 2 | 1キャラ本番（表情7種・まばたき・poster fallback） | ほぼ完了。実機での最終確認は都度お願いする |
 | 3 | モーション（Mixamo→Blender→VRMA） | 進行中。6種類導入済み（下記） |
 | 4 | 衣装/髪型（衣装ごとに別VRM） | 進行中。アイミー3種・しずく4種。別キャラの衣装・髪型試着版あり |
-| 5 | 残りキャラ移行＋セーブ移行UI | 未着手（なぎ・ひなた・れなにVRM未着手） |
+| 5 | 残りキャラ移行＋セーブ移行UI | 進行中（なぎ・れなにVRM配置済み。ひなたは未着手。セーブ移行UIは実装済みだが実機往復テスト未実施） |
 
 ## キャラクターとアセットの現状
 
@@ -43,9 +43,9 @@ This version has breaking changes — APIs, conventions, and file structure may 
 |---|---|---|---|---|
 | aimi | アイミー | swimsuit: ドレス / shirt: 腰巻きギャル / knit: オフショルニット | poolside | VRM済み |
 | shizuku | しずく | casual: 私服（ノースリーブ） / knit: 長袖ニット / leather: 黒レザードレス / fftifa: FFVティファ | washitsu | VRM済み |
-| nagi | なぎ | （未作成、variantId="default"のダミー） | night | **VRM未着手** |
+| nagi | なぎ | default: スタンダード（VRM0.0エクスポート） | night | VRM済み。posterなし（thumbnailImage未設定のため） |
 | hinata | ひなた | （未作成） | classroom | **VRM未着手** |
-| rena | れな | （未作成） | office | **VRM未着手** |
+| rena | れな | default: スタンダード（VRM0.0エクスポート、元ファイル名「あい」） | office | VRM済み。posterなし（thumbnailImage未設定のため） |
 
 モーション（`public/vrma/<motionId>.vrma`、全キャラ共通・人型ボーン名でリターゲット済み）:
 `idle`(たちポーズ) / `genki`(ごきげん立ち) / `kiss`(投げキッス) / `kick`(ハイキック) /
@@ -136,6 +136,19 @@ src/lib/vrm-manifest.ts  自動生成ファイル（直接編集しない）
     読み込み後に差し替える。顔形状・表情モーフはベース側のままなので、別顔メッシュを
     重ねるよりずれにくく、追加VRMも不要。差し替えテクスチャは`sRGB`、`flipY=false`に
     し、切替・破棄時に元のmapへ必ず戻して追加テクスチャをdisposeする。
+12. **届いたVRMがVRM 1.0とは限らない。** なぎ・れなのファイルは
+    `extensionsUsed`が`["KHR_materials_unlit","VRM"]`（`VRMC_vrm`ではない）
+    ＝VRM0.0エクスポートだった（VRoid Studioのエクスポート設定で1.0/0.0を
+    選べるため、指定し忘れると0.0で出る）。`@pixiv/three-vrm`
+    (`VRMLoaderPlugin`)は`acceptV0Meta`がデフォルトtrueで読み込み自体は
+    できるが、**正面の向きが180度逆のまま**になる。`loaded.meta?.metaVersion
+    === "0"`のときだけ`VRMUtils.rotateVRM0(loaded)`を呼んで揃える
+    （`useVrm.ts`）。VRM0.0はmetaに`thumbnailImage`ではなく`texture`
+    フィールドを持つ別構造で、そもそも値が`-1`（未設定）なこともあり、
+    その場合はposter.webpを生成できない（このケースでは実際に両方とも
+    未設定だった。poster自体はVRM読込失敗時の最終フォールバックなので
+    実害は小さいが、`受け取りルーティン`のVRMC_vrmチェックはVRM0.0では
+    素通りしてしまう点に注意——`extensionsUsed`を先に見て版を確認する）。
 
 ## Mixamo → Blender → VRMA の手順（確立済み）
 
@@ -166,9 +179,12 @@ src/lib/vrm-manifest.ts  自動生成ファイル（直接編集しない）
 新しいVRM/VRMAが届いたら、まずこれを機械的にチェックしてから組み込む
 （このセッションで確立した手順）:
 
-- **VRM**: glTFの`extensions.VRMC_vrm.meta`を見て`name`/`authors`で誰の
-  どの版か確認。`specVersion`が`"1.0"`か。`humanoid.humanBones`が54個前後
-  あるか。`expressions.preset`に標準7種＋viseme系があるか
+- **VRM**: まず`extensionsUsed`に`VRMC_vrm`があるか`VRM`（旧0.0）しかないかを
+  見る。1.0なら`extensions.VRMC_vrm.meta`の`name`/`authors`、`humanBones`が
+  54個前後あるか、`expressions.preset`に標準7種＋viseme系があるかを確認。
+  0.0なら`extensions.VRM.meta`（`title`/`author`/`humanoid.humanBones`
+  ／`blendShapeMaster.blendShapeGroups`）で同等の確認をし、上記12番の
+  向き補正が要ることを忘れない
 - **重複送信の検知**: 同じファイルが2回送られてくることが何度かあった
   （VRoid側で保存し忘れ、別のプロジェクトを開いたまま等）。`md5sum`で
   直前に配置したファイルと比較し、一致したら「変更が反映されていない
@@ -195,7 +211,7 @@ src/lib/vrm-manifest.ts  自動生成ファイル（直接編集しない）
 
 ## Git運用
 
-- 開発ブランチ: `agent/shizuku-sleeveless-expressions`（統合先: `main`）
+- 開発ブランチ: `claude/friend-app-v2-vrm-r0lkkr`（統合先: `main`）
 - コミットメッセージは日本語、「何を・なぜ」を書く（このリポジトリの
   git logを参照）。改修系コミットは原因と対処を書いておくと後から追える
 - 変更のたびに `npm run build` を通してからコミット・プッシュする
@@ -210,9 +226,14 @@ v1とは別のVercelプロジェクト（別URL）。環境変数は `GEMINI_API
 
 ## 次にやりそうなこと（優先度順の目安）
 
-1. なぎ・ひなた・れなのVRM作成（同じ手順：.vroid→VRMエクスポート→送付→配置）
+1. ひなたのVRM作成（同じ手順：.vroid→VRMエクスポート→送付→配置。
+   1.0でのエクスポートを念押しする——なぎ・れなはVRM0.0で来て上記12番の
+   対応が必要だった）
 2. Phase 2の実機最終確認（表情7種・まばたき間隔・poster fallback・
    prefers-reduced-motion）
 3. モーションの追加（Mixamoで探す→Blenderで変換の手順は確立済み）
 4. Phase 5: v1エクスポートJSONのインポート動作確認（`store.tsx`の
    `reconcile()`は実装済みだが実機での往復テストは未実施）
+5. なぎ・れなのposter.webp（VRM0.0のためthumbnailImage/textureが未設定で
+   自動抽出できなかった。VRoid側で全身キャプチャをもらうか、
+   VRM読込成功時にcanvasから撮る仕組みを別途作るか要検討）
