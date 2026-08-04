@@ -28,6 +28,17 @@ function isSkinMToonMaterial(material: THREE.Material): material is SkinMToonMat
 }
 
 /**
+ * VRMファイル自体にVRoid/Blenderで作った肌マテリアル（matcap等）を
+ * 持っているキャラは、下のaddSkinSheenで上書きするとせっかくの調整が
+ * 消えてしまう。personaIdはURL（/vrm/<personaId>/<variantId>.vrm）から取る
+ */
+const PERSONAS_WITH_TUNED_SKIN = new Set(["shizuku"]);
+
+function personaIdFromUrl(url: string): string | null {
+  return /\/vrm\/([^/]+)\//.exec(url)?.[1] ?? null;
+}
+
+/**
  * VRoid 側のテクスチャはそのままに、アプリの照明を受ける暖色のリム光を足す。
  * 顔は控えめ、脚を含む Body は少し強めにして、テカりではなく自然な艶に見せる。
  */
@@ -87,6 +98,9 @@ export function useVrm(url: string | null): UseVrmResult {
           VRMUtils.rotateVRM0(loaded);
         }
 
+        const personaId = personaIdFromUrl(url);
+        const hasTunedSkin = personaId !== null && PERSONAS_WITH_TUNED_SKIN.has(personaId);
+
         // 読み込み時に顔・目・髪の描画方法を一度決め、以後は角度や姿勢に
         // 左右されないよう固定する。これらは片面描画のことが多く、自由に
         // 回せるカメラで裏側に回り込むと顔だけ消えて見えるため両面描画にする。
@@ -109,7 +123,7 @@ export function useVrm(url: string | null): UseVrmResult {
               mat.side = THREE.DoubleSide;
               mat.needsUpdate = true;
             }
-            if (isSkinMToonMaterial(mat)) addSkinSheen(mat);
+            if (!hasTunedSkin && isSkinMToonMaterial(mat)) addSkinSheen(mat);
           }
         });
 
