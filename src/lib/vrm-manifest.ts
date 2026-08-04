@@ -23,6 +23,30 @@ export const VRM_MANIFEST: Record<string, PartOption[]> = {
       "rarity": "NR"
     }
   ],
+  "nagi": [
+    {
+      "id": "default",
+      "name": "スタンダード",
+      "rarity": "NR"
+    }
+  ],
+  "rena": [
+    {
+      "id": "casual",
+      "name": "私服",
+      "rarity": "NR"
+    },
+    {
+      "id": "default",
+      "name": "スタンダード",
+      "rarity": "NR"
+    },
+    {
+      "id": "work",
+      "name": "仕事着",
+      "rarity": "NR"
+    }
+  ],
   "shizuku": [
     {
       "id": "casual",

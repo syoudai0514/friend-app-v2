@@ -33,6 +33,14 @@ const DISPLAY_NAMES = {
     leather: "黒レザードレス",
     fftifa: "FFVティファ",
   },
+  nagi: {
+    default: "スタンダード",
+  },
+  rena: {
+    default: "スタンダード",
+    work: "仕事着",
+    casual: "私服",
+  },
 };
 
 async function variantIdsIn(personaId) {
