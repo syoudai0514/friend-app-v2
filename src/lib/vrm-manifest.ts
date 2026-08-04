@@ -32,8 +32,18 @@ export const VRM_MANIFEST: Record<string, PartOption[]> = {
   ],
   "rena": [
     {
+      "id": "casual",
+      "name": "私服",
+      "rarity": "NR"
+    },
+    {
       "id": "default",
       "name": "スタンダード",
+      "rarity": "NR"
+    },
+    {
+      "id": "work",
+      "name": "仕事着",
       "rarity": "NR"
     }
   ],

@@ -38,6 +38,8 @@ const DISPLAY_NAMES = {
   },
   rena: {
     default: "スタンダード",
+    work: "仕事着",
+    casual: "私服",
   },
 };
 

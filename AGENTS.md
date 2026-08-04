@@ -34,7 +34,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 | 1 | WebGL実機検証（サンプルVRM表示） | ✅完了 |
 | 2 | 1キャラ本番（表情7種・まばたき・poster fallback） | ほぼ完了。実機での最終確認は都度お願いする |
 | 3 | モーション（Mixamo→Blender→VRMA） | 進行中。6種類導入済み（下記） |
-| 4 | 衣装/髪型（衣装ごとに別VRM） | 進行中。アイミー3種・しずく4種。別キャラの衣装・髪型試着版あり |
+| 4 | 衣装/髪型（衣装ごとに別VRM） | 進行中。アイミー3種・しずく4種・れな3種。別キャラの衣装・髪型試着版あり |
 | 5 | 残りキャラ移行＋セーブ移行UI | 進行中（なぎ・れなにVRM配置済み。ひなたは未着手。セーブ移行UIは実装済みだが実機往復テスト未実施） |
 
 ## キャラクターとアセットの現状
@@ -45,7 +45,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 | shizuku | しずく | casual: 私服（ノースリーブ） / knit: 長袖ニット / leather: 黒レザードレス / fftifa: FFVティファ | washitsu | VRM済み |
 | nagi | なぎ | default: スタンダード（VRM0.0エクスポート） | night | VRM済み。posterなし（thumbnailImage未設定のため） |
 | hinata | ひなた | （未作成） | classroom | **VRM未着手** |
-| rena | れな | default: スタンダード（VRM0.0エクスポート、元ファイル名「あい」） | office | VRM済み。posterなし（thumbnailImage未設定のため） |
+| rena | れな | default: スタンダード / work: 仕事着 / casual: 私服（いずれもVRM0.0エクスポート、元ファイル名/タイトルは全て「あい」） | office | VRM済み。posterなし（thumbnailImage未設定のため） |
 
 モーション（`public/vrma/<motionId>.vrma`、全キャラ共通・人型ボーン名でリターゲット済み）:
 `idle`(たちポーズ) / `genki`(ごきげん立ち) / `kiss`(投げキッス) / `kick`(ハイキック) /
