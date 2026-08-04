@@ -1,8 +1,8 @@
-# キャラの体・顔の肌マテリアル（_SKIN）だけを別のVRMから移植するツール。
+# キャラの体・顔の肌の光沢（matcap＋リムライト）だけを別のVRMから移植するツール。
 # npm run dev/build の一部ではない、手動実行の保守スクリプト。
 #
 # 使い方: python3 scripts/patch-skin-material.py <元VRM> <対象VRM> <出力先>
-#   元VRM: 肌マテリアル（VRoid/Blenderで調整済み）を持つ参照用VRM
+#   元VRM: 肌の光沢（VRoid/Blenderで調整済み）を持つ参照用VRM
 #   対象VRM: 実際に配信しているキャラの衣装バリアント（public/vrm/<id>/<variant>.vrm）
 #   出力先: 生成物のパス。中身を確認してから対象VRMへ上書きする（直接上書きしない）
 #
@@ -12,16 +12,23 @@
 #       shizuku_gloss_reference.vrm public/vrm/shizuku/$f.vrm /tmp/$f.patched.vrm
 #   done
 #
-# 仕組み: 対象VRMのバッファ末尾に元VRMの肌テクスチャ画像だけを追記し、
-# images/textures/bufferViewsへ新しいエントリを追加、Body_00_SKINと
-# Face_00_SKINのマテリアルJSONを丸ごと元VRMのものに差し替えて（テクスチャ参照は
-# 追記した新エントリへ付け替える）保存する。既存のメッシュ・アクセサ・他マテリアルの
-# インデックスは一切変更しないので、服・髪・顔の他パーツには影響しない
-# （元の肌テクスチャは未参照のまま残り、ファイルサイズはやや増える）。
-#
-# 前提: 対象・元の両VRMでsamplers[0]がrepeat/linearの共通設定であること
-# （このプロジェクトのVRoid書き出しはどれも該当）。異なる場合はサンプラーも
-# 複製するようcollect/remap関数を拡張すること。
+# 【重要】最初のバージョンはBody_00_SKIN/Face_00_SKINマテリアルを丸ごと
+# 差し替えていたが、これは事故った。マテリアル全体を差し替えると
+# baseColorTexture（肌の色・柄そのもの）まで元VRMのものに変わってしまい、
+# ①衣装ごとに微妙に異なる肌の柄（FFVティファは腕・脚の露出部分の柄が
+# 他の衣装と違う）が消え、参照側の柄が透けて見えた、②FFVティファでは
+# さらに、なぜか脚のニーハイの見た目まで崩れた（別メッシュのはずが、
+# alphaMode/doubleSided等マテリアルの他プロパティ変更の副作用で
+# 描画が乱れたとみられる。原因を完全には特定できていない）。
+# そのため今のバージョンは光沢に直接関係するプロパティ
+# （matcapFactor・matcapTexture・rimLightingMixFactor・
+# parametricRimColorFactor・parametricRimFresnelPowerFactor・
+# parametricRimLiftFactor）だけを個別に上書きし、baseColorTexture・
+# normalTexture・emissiveTexture・shadeMultiplyTexture・
+# shadeColorFactor・shadingShift/ToonyFactor・alphaMode・doubleSided等、
+# 肌の柄や他の描画設定には一切触れない。差し替える前に対象VRMの
+# baseColorTextureのバイト列を確認し、パッチ後も不変であることを
+# 確認すること（これで柄が消えていないと機械的に検証できる）。
 import json
 import struct
 import sys
@@ -32,12 +39,12 @@ SKIN_MATERIAL_NAMES = [
     "N00_000_00_Face_00_SKIN (Instance)",
 ]
 
-MTOON_TEXTURE_KEYS = [
-    "shadeMultiplyTexture",
-    "matcapTexture",
-    "rimMultiplyTexture",
-    "outlineWidthMultiplyTexture",
-    "uvAnimationMaskTexture",
+GLOSS_SCALAR_KEYS = [
+    "matcapFactor",
+    "rimLightingMixFactor",
+    "parametricRimColorFactor",
+    "parametricRimFresnelPowerFactor",
+    "parametricRimLiftFactor",
 ]
 
 
@@ -78,32 +85,30 @@ def save_glb(path, gltf, bin_bytes):
         f.write(bin_bytes)
 
 
-def collect_texture_indices(material):
-    idxs = set()
-    pbr = material.get("pbrMetallicRoughness", {})
-    if "baseColorTexture" in pbr:
-        idxs.add(pbr["baseColorTexture"]["index"])
-    for key in ["normalTexture", "emissiveTexture", "occlusionTexture"]:
-        if key in material:
-            idxs.add(material[key]["index"])
-    mtoon = material.get("extensions", {}).get("VRMC_materials_mtoon", {})
-    for key in MTOON_TEXTURE_KEYS:
-        if key in mtoon:
-            idxs.add(mtoon[key]["index"])
-    return idxs
+def copy_texture(src_gltf, src_bin, tgt_gltf, tgt_bin, src_tex_idx):
+    src_tex = src_gltf["textures"][src_tex_idx]
+    src_img = src_gltf["images"][src_tex["source"]]
+    src_bv = src_gltf["bufferViews"][src_img["bufferView"]]
+    start = src_bv.get("byteOffset", 0)
+    length = src_bv["byteLength"]
+    img_bytes = bytes(src_bin[start : start + length])
 
+    pad = (4 - len(tgt_bin) % 4) % 4
+    tgt_bin.extend(b"\x00" * pad)
+    new_offset = len(tgt_bin)
+    tgt_bin.extend(img_bytes)
 
-def remap_texture_refs(material, mapping):
-    pbr = material.get("pbrMetallicRoughness", {})
-    if "baseColorTexture" in pbr:
-        pbr["baseColorTexture"]["index"] = mapping[pbr["baseColorTexture"]["index"]]
-    for key in ["normalTexture", "emissiveTexture", "occlusionTexture"]:
-        if key in material:
-            material[key]["index"] = mapping[material[key]["index"]]
-    mtoon = material.get("extensions", {}).get("VRMC_materials_mtoon", {})
-    for key in MTOON_TEXTURE_KEYS:
-        if key in mtoon:
-            mtoon[key]["index"] = mapping[mtoon[key]["index"]]
+    new_bv_idx = len(tgt_gltf["bufferViews"])
+    tgt_gltf["bufferViews"].append({"buffer": 0, "byteOffset": new_offset, "byteLength": length})
+
+    new_img_idx = len(tgt_gltf["images"])
+    new_img = dict(src_img)
+    new_img["bufferView"] = new_bv_idx
+    tgt_gltf["images"].append(new_img)
+
+    new_tex_idx = len(tgt_gltf["textures"])
+    tgt_gltf["textures"].append({"sampler": 0, "source": new_img_idx})
+    return new_tex_idx
 
 
 def patch(src_path, target_path, out_path):
@@ -113,54 +118,23 @@ def patch(src_path, target_path, out_path):
     src_materials = {
         m["name"]: m for m in src_gltf["materials"] if m["name"] in SKIN_MATERIAL_NAMES
     }
-    missing = set(SKIN_MATERIAL_NAMES) - set(src_materials.keys())
-    assert not missing, f"source missing materials: {missing}"
-
-    tgt_names = {m["name"] for m in tgt_gltf["materials"]}
-    missing_tgt = set(SKIN_MATERIAL_NAMES) - tgt_names
-    assert not missing_tgt, f"{target_path} missing materials: {missing_tgt}"
-
-    needed_tex_idxs = set()
-    for m in src_materials.values():
-        needed_tex_idxs |= collect_texture_indices(m)
-
-    mapping = {}
-    for src_tex_idx in sorted(needed_tex_idxs):
-        src_tex = src_gltf["textures"][src_tex_idx]
-        src_img = src_gltf["images"][src_tex["source"]]
-        src_bv = src_gltf["bufferViews"][src_img["bufferView"]]
-        start = src_bv.get("byteOffset", 0)
-        length = src_bv["byteLength"]
-        img_bytes = bytes(src_bin[start : start + length])
-
-        pad = (4 - len(tgt_bin) % 4) % 4
-        tgt_bin.extend(b"\x00" * pad)
-        new_offset = len(tgt_bin)
-        tgt_bin.extend(img_bytes)
-
-        new_bv_idx = len(tgt_gltf["bufferViews"])
-        tgt_gltf["bufferViews"].append(
-            {"buffer": 0, "byteOffset": new_offset, "byteLength": length}
-        )
-
-        new_img_idx = len(tgt_gltf["images"])
-        new_img = dict(src_img)
-        new_img["bufferView"] = new_bv_idx
-        tgt_gltf["images"].append(new_img)
-
-        new_tex_idx = len(tgt_gltf["textures"])
-        tgt_gltf["textures"].append({"sampler": 0, "source": new_img_idx})
-
-        mapping[src_tex_idx] = new_tex_idx
-        print(f"  copied texture {src_tex_idx} ({src_img.get('name')}) -> {new_tex_idx}")
+    tgt_materials = {
+        m["name"]: m for m in tgt_gltf["materials"] if m["name"] in SKIN_MATERIAL_NAMES
+    }
+    assert set(src_materials) == set(SKIN_MATERIAL_NAMES), "元VRMに肌マテリアルが見つからない"
+    assert set(tgt_materials) == set(SKIN_MATERIAL_NAMES), "対象VRMに肌マテリアルが見つからない"
 
     for name in SKIN_MATERIAL_NAMES:
-        new_mat = copy.deepcopy(src_materials[name])
-        remap_texture_refs(new_mat, mapping)
-        for i, m in enumerate(tgt_gltf["materials"]):
-            if m["name"] == name:
-                tgt_gltf["materials"][i] = new_mat
-                break
+        src_mtoon = src_materials[name]["extensions"]["VRMC_materials_mtoon"]
+        tgt_mtoon = tgt_materials[name]["extensions"]["VRMC_materials_mtoon"]
+
+        for key in GLOSS_SCALAR_KEYS:
+            tgt_mtoon[key] = copy.deepcopy(src_mtoon[key])
+
+        src_matcap_idx = src_mtoon["matcapTexture"]["index"]
+        new_idx = copy_texture(src_gltf, src_bin, tgt_gltf, tgt_bin, src_matcap_idx)
+        tgt_mtoon["matcapTexture"] = {"index": new_idx}
+        print(f"  {name}: matcapTexture -> {new_idx}, gloss factors copied")
 
     tgt_gltf["buffers"][0]["byteLength"] = len(tgt_bin)
     save_glb(out_path, tgt_gltf, tgt_bin)
