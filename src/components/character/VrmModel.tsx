@@ -90,6 +90,18 @@ function applyBoneOffset(
   bone.node.quaternion.multiply(bone.applied).normalize();
 }
 
+/**
+ * 腕を下ろした静止姿勢。normalizedボーンは「回転0 = T-pose」が基準なので絶対角度で指定する。
+ * 計測時に一度restポーズへ戻すと消えるため、関数として切り出して測り終えたら掛け直す。
+ */
+function applyArmDownPose(vrm: VRM): void {
+  const armDown = Math.PI * 0.42;
+  const leftUpperArm = vrm.humanoid.getNormalizedBoneNode("leftUpperArm");
+  const rightUpperArm = vrm.humanoid.getNormalizedBoneNode("rightUpperArm");
+  if (leftUpperArm) leftUpperArm.rotation.z = armDown;
+  if (rightUpperArm) rightUpperArm.rotation.z = -armDown;
+}
+
 /** v1のまばたき間隔・閉眼時間に合わせる */
 const BLINK_MIN_MS = 2600;
 const BLINK_MAX_MS = 6200;
@@ -535,12 +547,7 @@ export function VrmModel({
   // 前回のような差分ではなく絶対角度で指定する
   useEffect(() => {
     if (!vrm) return;
-    const humanoid = vrm.humanoid;
-    const armDown = Math.PI * 0.42;
-    const leftUpperArm = humanoid.getNormalizedBoneNode("leftUpperArm");
-    const rightUpperArm = humanoid.getNormalizedBoneNode("rightUpperArm");
-    if (leftUpperArm) leftUpperArm.rotation.z = armDown;
-    if (rightUpperArm) rightUpperArm.rotation.z = -armDown;
+    applyArmDownPose(vrm);
   }, [vrm]);
 
   // モーション(VRMA)が読めたら再生する。読めなかった・まだ無いモーションIDのときは
@@ -574,18 +581,32 @@ export function VrmModel({
     };
   }, [vrm, vrmAnimation]);
 
-  // v1の立ち絵に近いサイズ感（全身〜ふくらはぎ）になる位置を初期カメラとして計算し、
-  // OrbitControlsの注視点として渡す。そのあとの拡大・回転・移動はユーザー操作に任せる。
-  // モデルごとの身長差を吸収するため、固定距離ではなく実際の全身の高さから逆算する
+  // 身長・足元・頭の位置を測って親へ渡す。ベースと借り物（服・髪）の位置合わせは
+  // この値の差で決まるため、**必ず同じ姿勢で測らなければならない**。
+  // モーション再生中の姿勢で測ると、借り物側（読み込み直後の静止姿勢で1回だけ測る）との
+  // 間で基準がずれ、髪が頭から外れる・服が上下にドリフトする事故になる。
+  // そのため (1) restポーズへ戻してから測り、(2) VRMごとに1回だけ走らせる。
+  const measuredRef = useRef<VRM | null>(null);
   useEffect(() => {
-    if (!vrm) return;
+    if (!vrm || measuredRef.current === vrm) return;
+    measuredRef.current = vrm;
+
+    // 計測中だけ素の姿勢に固定する。モーションは次のフレームで再評価されるので
+    // 見た目には影響しないが、armDownはここで消えるため測ったあとに掛け直す。
+    vrm.humanoid.resetNormalizedPose();
+    vrm.humanoid.update();
     vrm.scene.updateMatrixWorld(true);
+
     const box = new THREE.Box3().setFromObject(vrm.scene);
     const height = box.max.y - box.min.y;
-    if (!Number.isFinite(height) || height <= 0) return;
-
     const headNode = vrm.humanoid.getRawBoneNode("head");
     const headPosition = headNode ? headNode.getWorldPosition(new THREE.Vector3()) : null;
+
+    applyArmDownPose(vrm);
+    vrm.humanoid.update();
+    vrm.scene.updateMatrixWorld(true);
+
+    if (!Number.isFinite(height) || height <= 0) return;
     onMeasured?.({
       height,
       minY: box.min.y,
@@ -593,7 +614,20 @@ export function VrmModel({
         ? { x: headPosition.x, y: headPosition.y, z: headPosition.z }
         : null,
     });
-    if (!fitCamera) return;
+  }, [vrm, onMeasured]);
+
+  // v1の立ち絵に近いサイズ感（全身〜ふくらはぎ）になる位置を初期カメラとして計算し、
+  // OrbitControlsの注視点として渡す。そのあとの拡大・回転・移動はユーザー操作に任せる。
+  // モデルごとの身長差を吸収するため、固定距離ではなく実際の全身の高さから逆算する。
+  // 「初回ロード時に一度だけ」が意図なので、こちらもVRMごとに1回に固定する
+  const fittedCameraRef = useRef<VRM | null>(null);
+  useEffect(() => {
+    if (!vrm || !fitCamera || fittedCameraRef.current === vrm) return;
+    fittedCameraRef.current = vrm;
+    vrm.scene.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(vrm.scene);
+    const height = box.max.y - box.min.y;
+    if (!Number.isFinite(height) || height <= 0) return;
 
     const centerX = (box.min.x + box.max.x) / 2;
     const centerZ = (box.min.z + box.max.z) / 2;
@@ -634,7 +668,7 @@ export function VrmModel({
         controls.update();
       }
     }
-  }, [vrm, camera, fitCamera, initialView, minCameraDistance, onMeasured, orbitControlsRef]);
+  }, [vrm, camera, fitCamera, initialView, minCameraDistance, orbitControlsRef]);
 
   useFrame((state, delta) => {
     if (!vrm) return;
