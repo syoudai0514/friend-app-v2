@@ -173,6 +173,37 @@ src/lib/vrm-manifest.ts  自動生成ファイル（直接編集しない）
     重ねがけすると未参照テクスチャが世代分蓄積してファイルサイズが
     膨らむため、必ずgit履歴からパッチ前のオリジナルを取り出して
     起点にすること（`git show <パッチ前のコミット>:<path> > original.vrm`）。
+14. **肌の色・光沢は「キャラ全員が選べる」形にするなら、VRMファイルを個別に
+    書き換えるのではなく実行時に適用する方が本筋。**（2026-08-05、しずくの
+    肌色黒め／アイミーの白めをお互いに選べるようにし、光沢も脚を含め
+    全キャラに適用できるようにした際の判断）
+    - **肌色**: 既存のバリエーション試着機能で使っていた
+      `recolorBodyTexture`（Canvas上でBody_00_SKINのテクスチャを
+      ソース色→ターゲット色へ比率変換）を、試着中の借り物の体だけでなく
+      自分自身の体にも適用できるよう`VrmCanvas.tsx`に`baseSkinSourceColor`
+      を追加した。各キャラの肌色hexは目視ではなくBody_00_SKINベース
+      テクスチャの肌色ピクセル（`r>=65,g>=45,b>=35,r-g>=4,g-b>=2`の
+      条件を満たすもの）の中央値から算出している
+      （既存のaimi/shizukuの手打ち値と算出結果が実際にほぼ一致したため、
+      この方法で間違いないと確認できた）。`Look.skinTone`に
+      `{personaId, variantId}`で保存するが、色の決定に使うのは
+      `personaId`だけ（`variantId`は他の試着系フィールドとの型統一のため
+      残しているだけで参照していない）。
+    - **光沢**: しずくの肌はVRMファイル自体にmatcap＋parametric
+      rimを焼き込んでいた（13番参照）が、これだと他キャラに広げるのに
+      毎回VRMを個別パッチする必要がある。そこで「しずくのVRMから
+      matcap画像を1枚だけ抽出して`public/textures/skin-gloss-matcap.png`
+      という共有アセットにする」→「`VrmModel.tsx`の新しいuseEffectで、
+      表示中のVRMのBody_00_SKINマテリアルに対し
+      `matcapFactor`/`matcapTexture`/`rimLightingMixFactor`/
+      `parametricRimColorFactor`等を実行時に代入する」方式に変えた。
+      これによりVRMファイルは一切書き換えず、`Look.skinGloss`
+      （`null`=変更なし／`"normal"`=しずくの実際の値／`"strong"`=強め）
+      だけでどのキャラ・どの衣装にも同じ光沢を再現できる。抽出画像は
+      1254×1254と大きすぎたため256×256にダウンサイズしてから配置した
+      （matcapは球面マッピングの滑らかな絵柄なので高解像度は不要）。
+      効果はBody_00_SKINのみに絞り、Face_00_SKINには触れていない
+      （ユーザーの要望が「脚の光沢」だったため）。
 
 ## Mixamo → Blender → VRMA の手順（確立済み）
 
