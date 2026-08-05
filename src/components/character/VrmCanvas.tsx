@@ -65,21 +65,14 @@ function AppearanceLayers({
     baseBounds && outfitBounds && outfitBounds.height > 0
       ? baseBounds.height / outfitBounds.height
       : 1;
-  // 足元ではなく首の付け根（headボーン）を基準に衣装元の体を合わせる。体格差があると
-  // 全身の高さだけを合わせても首まわりに隙間ができ、あごの下が透けて見えてしまうため
-  // （headボーンより下は服で隠れる想定なので、足元が多少ずれるのは許容する）。
-  const canAlignOutfitHead = Boolean(baseBounds?.head && outfitBounds?.head);
-  const outfitOffsetX = canAlignOutfitHead
-    ? baseBounds!.head!.x - outfitBounds!.head!.x * outfitScale
-    : 0;
-  const outfitOffsetY = canAlignOutfitHead
-    ? baseBounds!.head!.y - outfitBounds!.head!.y * outfitScale
-    : baseBounds && outfitBounds
-      ? baseBounds.minY - outfitBounds.minY * outfitScale
-      : 0;
-  const outfitOffsetZ = canAlignOutfitHead
-    ? baseBounds!.head!.z - outfitBounds!.head!.z * outfitScale
-    : 0;
+  // headボーンのワールド座標はアイドルモーションの揺れ・向きで刻々と動くため、
+  // 一度だけの計測値を全身の固定オフセットに使うと、計測の一瞬とズレたときに
+  // 首が不自然に伸びる事故になった（実際にshizuku×なぎの服の組み合わせで発生）。
+  // 首の隙間は本来体格差の問題であり、位置合わせでは根治しないと判断し、
+  // 従来どおり足元（minY）で合わせる方式に戻した。首まわりの隙間自体は
+  // 本人側のジオメトリ差し替え（onlyHead）で別途対策している。
+  const outfitOffsetY =
+    baseBounds && outfitBounds ? baseBounds.minY - outfitBounds.minY * outfitScale : 0;
   const hasOutfit = Boolean(outfitUrl);
   const hasHair = Boolean(hairUrl);
   const hairScale =
@@ -135,9 +128,7 @@ function AppearanceLayers({
           fitCamera={false}
           syncMotion
           modelScale={[outfitScale, outfitScale, outfitScale * outfitDepthScale]}
-          modelOffsetX={outfitOffsetX}
           modelOffsetY={outfitOffsetY}
-          modelOffsetZ={outfitOffsetZ}
           onMeasured={onOutfitBounds}
           onReady={() => setOutfitReady(true)}
         />

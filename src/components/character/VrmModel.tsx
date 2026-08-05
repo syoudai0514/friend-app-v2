@@ -118,6 +118,10 @@ function isBodyMaterial(material: THREE.Material): boolean {
   return /Body_00_SKIN/.test(material.name);
 }
 
+function isFaceSkinMaterial(material: THREE.Material): boolean {
+  return /Face_00_SKIN/.test(material.name);
+}
+
 /** MToonマテリアルのうち、脚などBodyの艶（matcap＋リムライト）を上書きする対象を表した型 */
 type SkinGlossMaterial = THREE.Material & {
   isMToonMaterial: true;
@@ -488,6 +492,9 @@ export function VrmModel({
 
   // 衣装側のBody形状を一緒に使うことで、VRoidの書き出し時に省かれた身体の面を補う。
   // Body画像に焼き込まれた下着・靴下・陰影は残し、肌に当たる色だけ着る側へ合わせる。
+  // Face_00_SKINも同時に合わせないと、本人の肌色を変えたときに顔だけ元の色のまま
+  // 残り、首の境目で二色に分かれて見える事故になる（衣装元の顔は元々非表示なので
+  // ここに含めても実害はない）。
   useEffect(() => {
     if (!vrm || !bodySkinColor || !bodySkinSourceColor) return;
     const source = parseHexColor(bodySkinSourceColor);
@@ -500,7 +507,8 @@ export function VrmModel({
       if (!(obj instanceof THREE.Mesh)) return;
       const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
       for (const material of materials) {
-        if (!isBodyMaterial(material) || !hasTextureMap(material) || !material.map) continue;
+        const isSkin = isBodyMaterial(material) || isFaceSkinMaterial(material);
+        if (!isSkin || !hasTextureMap(material) || !material.map) continue;
         const original = material.map;
         let recolored = recoloredMaps.get(original);
         if (!recolored) {
