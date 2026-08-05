@@ -100,13 +100,10 @@ export function CharacterStage({
 
   const showPoster = vrmStatus === "error" && !posterFailed;
   const showErrorText = vrmStatus === "error" && posterFailed;
-  const hasOutfitOverride = Boolean(look.outfit);
-
-  // 肌の色を別キャラのものに変える指定があれば、それを「今の肌色」として扱う。
-  // 服だけ借りているときはその服の体を自分の肌色（＝この今の肌色）へ合わせる。
+  // 借り物の服を着ても体は常に本人のものなので、肌の色は肌色ピッカーの指定だけで決まる。
+  // 元の肌色から選んだ肌色へテクスチャを変換する（同じなら変換自体を行わない）。
   const ownSkinColor = BODY_SKIN_COLORS[personaId] ?? DEFAULT_SKIN_COLOR;
   const skinToneColor = look.skinTone ? (BODY_SKIN_COLORS[look.skinTone.personaId] ?? null) : null;
-  const effectiveSkinColor = skinToneColor ?? (hasOutfitOverride ? ownSkinColor : null);
 
   return (
     <div className="absolute inset-0 bg-[#12121a]" style={{ bottom: lift }}>
@@ -132,11 +129,8 @@ export function CharacterStage({
         mouthTextureUrl={
           look.mouth ? `/face-parts/${look.mouth.personaId}/mouth.png` : null
         }
-        bodySkinColor={effectiveSkinColor}
-        bodySkinSourceColor={
-          look.outfit ? (BODY_SKIN_COLORS[look.outfit.personaId] ?? DEFAULT_SKIN_COLOR) : null
-        }
-        baseSkinSourceColor={skinToneColor && !look.outfit ? ownSkinColor : null}
+        bodySkinColor={skinToneColor}
+        bodySkinSourceColor={skinToneColor ? ownSkinColor : null}
         skinGlossLevel={look.skinGloss ?? null}
         initialView={initialView}
         onViewChange={rememberView}

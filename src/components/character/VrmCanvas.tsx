@@ -18,7 +18,6 @@ function AppearanceLayers({
   mouthTextureUrl,
   bodySkinColor,
   bodySkinSourceColor,
-  baseSkinSourceColor,
   skinGlossLevel,
   initialView,
   minCameraDistance,
@@ -39,7 +38,6 @@ function AppearanceLayers({
   mouthTextureUrl: string | null;
   bodySkinColor: string | null;
   bodySkinSourceColor: string | null;
-  baseSkinSourceColor: string | null;
   skinGlossLevel: "normal" | "strong" | null;
   initialView: StageViewState | null;
   minCameraDistance: number;
@@ -68,9 +66,7 @@ function AppearanceLayers({
   // headボーンのワールド座標はアイドルモーションの揺れ・向きで刻々と動くため、
   // 一度だけの計測値を全身の固定オフセットに使うと、計測の一瞬とズレたときに
   // 首が不自然に伸びる事故になった（実際にshizuku×なぎの服の組み合わせで発生）。
-  // 首の隙間は本来体格差の問題であり、位置合わせでは根治しないと判断し、
-  // 従来どおり足元（minY）で合わせる方式に戻した。首まわりの隙間自体は
-  // 本人側のジオメトリ差し替え（onlyHead）で別途対策している。
+  // 位置合わせは足元（minY）基準に固定する。
   const outfitOffsetY =
     baseBounds && outfitBounds ? baseBounds.minY - outfitBounds.minY * outfitScale : 0;
   const hasOutfit = Boolean(outfitUrl);
@@ -98,13 +94,12 @@ function AppearanceLayers({
         reducedMotion={reducedMotion}
         orbitControlsRef={orbitControlsRef}
         hideClothes={hasOutfit && outfitReady}
-        hideBody={hasOutfit && outfitReady}
         hideHair={hasHair && hairReady}
         irisTextureUrl={irisTextureUrl}
         browsTextureUrl={browsTextureUrl}
         mouthTextureUrl={mouthTextureUrl}
         bodySkinColor={bodySkinColor}
-        bodySkinSourceColor={baseSkinSourceColor}
+        bodySkinSourceColor={bodySkinSourceColor}
         skinGlossLevel={skinGlossLevel}
         initialView={initialView}
         minCameraDistance={minCameraDistance}
@@ -121,10 +116,9 @@ function AppearanceLayers({
           talking={false}
           reducedMotion={reducedMotion}
           orbitControlsRef={orbitControlsRef}
-          materialMode="bodyAndClothes"
-          bodySkinColor={bodySkinColor}
-          bodySkinSourceColor={bodySkinSourceColor}
-          skinGlossLevel={skinGlossLevel}
+          // 服だけを借りる。本人のBody_00_SKINは下着まで含んだ完全な素体なので、
+          // 衣装元の体は一切要らない（重ねると首の継ぎ目・肌の色差が必ず出る）
+          materialMode="onlyClothes"
           fitCamera={false}
           syncMotion
           modelScale={[outfitScale, outfitScale, outfitScale * outfitDepthScale]}
@@ -166,7 +160,6 @@ export function VrmCanvas({
   mouthTextureUrl = null,
   bodySkinColor = null,
   bodySkinSourceColor = null,
-  baseSkinSourceColor = null,
   skinGlossLevel = null,
   initialView = null,
   onViewChange,
@@ -187,7 +180,6 @@ export function VrmCanvas({
   mouthTextureUrl?: string | null;
   bodySkinColor?: string | null;
   bodySkinSourceColor?: string | null;
-  baseSkinSourceColor?: string | null;
   skinGlossLevel?: "normal" | "strong" | null;
   initialView?: StageViewState | null;
   onViewChange?: (view: StageViewState) => void;
@@ -250,7 +242,6 @@ export function VrmCanvas({
         mouthTextureUrl={mouthTextureUrl}
         bodySkinColor={bodySkinColor}
         bodySkinSourceColor={bodySkinSourceColor}
-        baseSkinSourceColor={baseSkinSourceColor}
         skinGlossLevel={skinGlossLevel}
         motionUrl={motionUrl}
         expression={expression}

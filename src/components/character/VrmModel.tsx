@@ -104,7 +104,7 @@ export interface ModelBounds {
   head: { x: number; y: number; z: number } | null;
 }
 
-export type VrmMaterialMode = "full" | "bodyAndClothes" | "onlyClothes" | "onlyHair";
+export type VrmMaterialMode = "full" | "onlyClothes" | "onlyHair";
 
 function isClothingMaterial(material: THREE.Material): boolean {
   return /_CLOTH(?:_| \(|$)/.test(material.name);
@@ -152,86 +152,6 @@ const SKIN_GLOSS_PRESETS: Record<
   normal: { matcap: 0.09, rimColor: 0.00155, fresnel: 100, lift: 0.1 },
   strong: { matcap: 0.18, rimColor: 0.00155, fresnel: 100, lift: 0.1 },
 };
-
-/**
- * Bodyメッシュを頭ボーンへの追従度でふるい分ける。
- * - "excludeHead": 衣装元のBody用。頭の下地は別体型へ重ねると顔より手前へ出るため除く
- * - "onlyHead": 本人のBody用。借り物の服を着る間も首まわりの肌だけは自分のものを
- *   残し、衣装元の首との境目に隙間ができて顔の下側（両面描画のFace_00_SKIN背面）が
- *   透けて見える事故を防ぐ
- */
-function filterBodyGeometryByHead(
-  mesh: THREE.SkinnedMesh,
-  head: THREE.Object3D,
-  keep: "excludeHead" | "onlyHead",
-  threshold = 0.35,
-): THREE.BufferGeometry | null {
-  const geometry = mesh.geometry;
-  const position = geometry.getAttribute("position");
-  const skinIndex = geometry.getAttribute("skinIndex");
-  const skinWeight = geometry.getAttribute("skinWeight");
-  if (!position || !skinIndex || !skinWeight) return null;
-
-  const headBoneIndices = new Set<number>();
-  head.traverse((node) => {
-    const boneIndex = mesh.skeleton.bones.indexOf(node as THREE.Bone);
-    if (boneIndex >= 0) headBoneIndices.add(boneIndex);
-  });
-  if (headBoneIndices.size === 0) return null;
-
-  const belongsToHead = new Uint8Array(position.count);
-  let matchingVertices = 0;
-  for (let vertex = 0; vertex < position.count; vertex += 1) {
-    let headWeight = 0;
-    for (let slot = 0; slot < 4; slot += 1) {
-      if (headBoneIndices.has(skinIndex.getComponent(vertex, slot))) {
-        headWeight += skinWeight.getComponent(vertex, slot);
-      }
-    }
-    if (headWeight >= threshold) {
-      belongsToHead[vertex] = 1;
-      matchingVertices += 1;
-    }
-  }
-  if (matchingVertices === 0) return null;
-
-  const sourceIndex = geometry.index;
-  const sourceCount = sourceIndex?.count ?? position.count;
-  const indexAt = (offset: number) => (sourceIndex ? sourceIndex.getX(offset) : offset);
-  const sourceGroups =
-    geometry.groups.length > 0
-      ? geometry.groups
-      : [{ start: 0, count: sourceCount, materialIndex: 0 }];
-  const ranges = new Map<string, { start: number; count: number }>();
-  const indices: number[] = [];
-
-  for (const group of sourceGroups) {
-    const key = `${group.start}:${group.count}`;
-    if (ranges.has(key)) continue;
-    const start = indices.length;
-    const end = Math.min(group.start + group.count, sourceCount);
-    for (let offset = group.start; offset + 2 < end; offset += 3) {
-      const a = indexAt(offset);
-      const b = indexAt(offset + 1);
-      const c = indexAt(offset + 2);
-      const touchesHead = belongsToHead[a] || belongsToHead[b] || belongsToHead[c];
-      if (keep === "excludeHead" ? touchesHead : !touchesHead) continue;
-      indices.push(a, b, c);
-    }
-    ranges.set(key, { start, count: indices.length - start });
-  }
-
-  const filtered = geometry.clone();
-  filtered.setIndex(indices);
-  filtered.clearGroups();
-  for (const group of sourceGroups) {
-    const range = ranges.get(`${group.start}:${group.count}`);
-    if (range) filtered.addGroup(range.start, range.count, group.materialIndex);
-  }
-  filtered.computeBoundingBox();
-  filtered.computeBoundingSphere();
-  return filtered;
-}
 
 type TexturedMaterial = THREE.Material & { map: THREE.Texture | null };
 
@@ -329,7 +249,6 @@ export function VrmModel({
   orbitControlsRef,
   materialMode = "full",
   hideClothes = false,
-  hideBody = false,
   hideHair = false,
   irisTextureUrl = null,
   browsTextureUrl = null,
@@ -357,7 +276,6 @@ export function VrmModel({
   orbitControlsRef: RefObject<OrbitControlsImpl | null>;
   materialMode?: VrmMaterialMode;
   hideClothes?: boolean;
-  hideBody?: boolean;
   hideHair?: boolean;
   irisTextureUrl?: string | null;
   browsTextureUrl?: string | null;
@@ -404,85 +322,17 @@ export function VrmModel({
       const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
       for (const material of materials) {
         const clothing = isClothingMaterial(material);
-        const body = isBodyMaterial(material);
         const hair = isHairMaterial(material);
-        if (materialMode === "bodyAndClothes") {
-          material.visible = body || clothing;
-        } else if (materialMode === "onlyClothes") {
+        if (materialMode === "onlyClothes") {
           material.visible = clothing;
         } else if (materialMode === "onlyHair") {
           material.visible = hair;
         } else {
-          // hideBody中はBodyを丸ごと隠さず、下のジオメトリ差し替えエフェクトが
-          // 首まわりの肌だけに絞り込む（隠すのはメッシュの形状であって可視性ではない）
           material.visible = !(hideClothes && clothing) && !(hideHair && hair);
         }
       }
     });
-  }, [hideBody, hideClothes, hideHair, materialMode, vrm]);
-
-  // 衣装元は首より下のBodyと服だけに固定する。顔・目・髪は常に本人側を使い、
-  // 体型差やモーションで衣装元の頭の下地が前へ出ないようにする。
-  useEffect(() => {
-    if (!vrm || materialMode !== "bodyAndClothes") return;
-    const head = vrm.humanoid.getRawBoneNode("head");
-    if (!head) return;
-
-    const replacements: Array<{
-      mesh: THREE.SkinnedMesh;
-      original: THREE.BufferGeometry;
-      filtered: THREE.BufferGeometry;
-    }> = [];
-    vrm.scene.traverse((obj) => {
-      if (!(obj instanceof THREE.SkinnedMesh)) return;
-      const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
-      if (!materials.some(isBodyMaterial)) return;
-      const filtered = filterBodyGeometryByHead(obj, head, "excludeHead");
-      if (!filtered) return;
-      replacements.push({ mesh: obj, original: obj.geometry, filtered });
-      obj.geometry = filtered;
-    });
-
-    return () => {
-      for (const { mesh, original, filtered } of replacements) {
-        mesh.geometry = original;
-        filtered.dispose();
-      }
-    };
-  }, [materialMode, vrm]);
-
-  // 借り物の服を着ている間、本人のBodyは丸ごと隠さず首まわりの肌（headボーンに
-  // 追従する三角形）だけ残す。上の衣装元エフェクトと対になる処理で、両者の継ぎ目に
-  // 隙間ができてFace_00_SKIN（両面描画）の裏側が透けて見える事故を防ぐ
-  useEffect(() => {
-    if (!vrm || materialMode !== "full" || !hideBody) return;
-    const head = vrm.humanoid.getRawBoneNode("head");
-    if (!head) return;
-
-    const replacements: Array<{
-      mesh: THREE.SkinnedMesh;
-      original: THREE.BufferGeometry;
-      filtered: THREE.BufferGeometry;
-    }> = [];
-    vrm.scene.traverse((obj) => {
-      if (!(obj instanceof THREE.SkinnedMesh)) return;
-      const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
-      if (!materials.some(isBodyMaterial)) return;
-      // 衣装元側と同じ閾値だと境目がぴったり接するだけで済まず、わずかな隙間が
-      // 残ることがあったため、本人側は閾値を下げて少し多めに（＝下まで）残す
-      const filtered = filterBodyGeometryByHead(obj, head, "onlyHead", 0.12);
-      if (!filtered) return;
-      replacements.push({ mesh: obj, original: obj.geometry, filtered });
-      obj.geometry = filtered;
-    });
-
-    return () => {
-      for (const { mesh, original, filtered } of replacements) {
-        mesh.geometry = original;
-        filtered.dispose();
-      }
-    };
-  }, [hideBody, materialMode, vrm]);
+  }, [hideClothes, hideHair, materialMode, vrm]);
 
   // 表示対象のパーツを固定してから親へ準備完了を伝える。これによりベース側を
   // 隠すタイミングでも、一瞬だけ衣装元の全身が混ざる状態を作らない。
