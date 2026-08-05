@@ -150,12 +150,17 @@ const SKIN_GLOSS_PRESETS: Record<
 };
 
 /**
- * 衣装元のBodyには頭の下地まで含まれる。別体型へ重ねると顔より手前へ出るため、
- * 頭ボーンに追従する三角形だけを除き、首より下の肌補完は残す。
+ * Bodyメッシュを頭ボーンへの追従度でふるい分ける。
+ * - "excludeHead": 衣装元のBody用。頭の下地は別体型へ重ねると顔より手前へ出るため除く
+ * - "onlyHead": 本人のBody用。借り物の服を着る間も首まわりの肌だけは自分のものを
+ *   残し、衣装元の首との境目に隙間ができて顔の下側（両面描画のFace_00_SKIN背面）が
+ *   透けて見える事故を防ぐ
  */
-function bodyGeometryWithoutHead(
+function filterBodyGeometryByHead(
   mesh: THREE.SkinnedMesh,
   head: THREE.Object3D,
+  keep: "excludeHead" | "onlyHead",
+  threshold = 0.35,
 ): THREE.BufferGeometry | null {
   const geometry = mesh.geometry;
   const position = geometry.getAttribute("position");
@@ -179,7 +184,7 @@ function bodyGeometryWithoutHead(
         headWeight += skinWeight.getComponent(vertex, slot);
       }
     }
-    if (headWeight >= 0.35) {
+    if (headWeight >= threshold) {
       belongsToHead[vertex] = 1;
       matchingVertices += 1;
     }
@@ -205,7 +210,8 @@ function bodyGeometryWithoutHead(
       const a = indexAt(offset);
       const b = indexAt(offset + 1);
       const c = indexAt(offset + 2);
-      if (belongsToHead[a] || belongsToHead[b] || belongsToHead[c]) continue;
+      const touchesHead = belongsToHead[a] || belongsToHead[b] || belongsToHead[c];
+      if (keep === "excludeHead" ? touchesHead : !touchesHead) continue;
       indices.push(a, b, c);
     }
     ranges.set(key, { start, count: indices.length - start });
@@ -403,8 +409,9 @@ export function VrmModel({
         } else if (materialMode === "onlyHair") {
           material.visible = hair;
         } else {
-          material.visible =
-            !(hideClothes && clothing) && !(hideBody && body) && !(hideHair && hair);
+          // hideBody中はBodyを丸ごと隠さず、下のジオメトリ差し替えエフェクトが
+          // 首まわりの肌だけに絞り込む（隠すのはメッシュの形状であって可視性ではない）
+          material.visible = !(hideClothes && clothing) && !(hideHair && hair);
         }
       }
     });
@@ -426,7 +433,7 @@ export function VrmModel({
       if (!(obj instanceof THREE.SkinnedMesh)) return;
       const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
       if (!materials.some(isBodyMaterial)) return;
-      const filtered = bodyGeometryWithoutHead(obj, head);
+      const filtered = filterBodyGeometryByHead(obj, head, "excludeHead");
       if (!filtered) return;
       replacements.push({ mesh: obj, original: obj.geometry, filtered });
       obj.geometry = filtered;
@@ -439,6 +446,39 @@ export function VrmModel({
       }
     };
   }, [materialMode, vrm]);
+
+  // 借り物の服を着ている間、本人のBodyは丸ごと隠さず首まわりの肌（headボーンに
+  // 追従する三角形）だけ残す。上の衣装元エフェクトと対になる処理で、両者の継ぎ目に
+  // 隙間ができてFace_00_SKIN（両面描画）の裏側が透けて見える事故を防ぐ
+  useEffect(() => {
+    if (!vrm || materialMode !== "full" || !hideBody) return;
+    const head = vrm.humanoid.getRawBoneNode("head");
+    if (!head) return;
+
+    const replacements: Array<{
+      mesh: THREE.SkinnedMesh;
+      original: THREE.BufferGeometry;
+      filtered: THREE.BufferGeometry;
+    }> = [];
+    vrm.scene.traverse((obj) => {
+      if (!(obj instanceof THREE.SkinnedMesh)) return;
+      const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+      if (!materials.some(isBodyMaterial)) return;
+      // 衣装元側と同じ閾値だと境目がぴったり接するだけで済まず、わずかな隙間が
+      // 残ることがあったため、本人側は閾値を下げて少し多めに（＝下まで）残す
+      const filtered = filterBodyGeometryByHead(obj, head, "onlyHead", 0.12);
+      if (!filtered) return;
+      replacements.push({ mesh: obj, original: obj.geometry, filtered });
+      obj.geometry = filtered;
+    });
+
+    return () => {
+      for (const { mesh, original, filtered } of replacements) {
+        mesh.geometry = original;
+        filtered.dispose();
+      }
+    };
+  }, [hideBody, materialMode, vrm]);
 
   // 表示対象のパーツを固定してから親へ準備完了を伝える。これによりベース側を
   // 隠すタイミングでも、一瞬だけ衣装元の全身が混ざる状態を作らない。
