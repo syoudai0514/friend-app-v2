@@ -12,10 +12,15 @@ import type { StageViewState } from "./stage-view";
 // three系はサイズが大きいので、クライアントでしか要らないWebGL部分だけ切り出して遅延読み込みする
 const VrmCanvas = dynamic(() => import("./VrmCanvas").then((m) => m.VrmCanvas), { ssr: false });
 
-const BODY_SKIN_COLORS: Record<string, string> = {
+// 各キャラのBody_00_SKINベーステクスチャから抽出した肌色の代表値
+// （肌色ピクセルの中央値。詳細はAGENTS.mdの「実装で分かった落とし穴」を参照）
+export const BODY_SKIN_COLORS: Record<string, string> = {
   aimi: "#f9e7d9",
   shizuku: "#e2c29f",
+  nagi: "#cb9771",
+  rena: "#f2c7b2",
 };
+export const DEFAULT_SKIN_COLOR = "#e6c8aa";
 
 // Next.jsの画面切替でCanvasが作り直されても、同じキャラ・衣装なら見ていた位置を戻す。
 // 衣装ごとに体格が違うため、見た目の組み合わせをキーにして混線を防ぐ。
@@ -97,6 +102,12 @@ export function CharacterStage({
   const showErrorText = vrmStatus === "error" && posterFailed;
   const hasOutfitOverride = Boolean(look.outfit);
 
+  // 肌の色を別キャラのものに変える指定があれば、それを「今の肌色」として扱う。
+  // 服だけ借りているときはその服の体を自分の肌色（＝この今の肌色）へ合わせる。
+  const ownSkinColor = BODY_SKIN_COLORS[personaId] ?? DEFAULT_SKIN_COLOR;
+  const skinToneColor = look.skinTone ? (BODY_SKIN_COLORS[look.skinTone.personaId] ?? null) : null;
+  const effectiveSkinColor = skinToneColor ?? (hasOutfitOverride ? ownSkinColor : null);
+
   return (
     <div className="absolute inset-0 bg-[#12121a]" style={{ bottom: lift }}>
       <div
@@ -121,10 +132,12 @@ export function CharacterStage({
         mouthTextureUrl={
           look.mouth ? `/face-parts/${look.mouth.personaId}/mouth.png` : null
         }
-        bodySkinColor={hasOutfitOverride ? (BODY_SKIN_COLORS[personaId] ?? "#e6c8aa") : null}
+        bodySkinColor={effectiveSkinColor}
         bodySkinSourceColor={
-          look.outfit ? (BODY_SKIN_COLORS[look.outfit.personaId] ?? "#e6c8aa") : null
+          look.outfit ? (BODY_SKIN_COLORS[look.outfit.personaId] ?? DEFAULT_SKIN_COLOR) : null
         }
+        baseSkinSourceColor={skinToneColor && !look.outfit ? ownSkinColor : null}
+        skinGlossLevel={look.skinGloss ?? null}
         initialView={initialView}
         onViewChange={rememberView}
         motionUrl={vrmaUrl(look.motionId)}

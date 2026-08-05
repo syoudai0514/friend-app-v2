@@ -118,6 +118,37 @@ function isBodyMaterial(material: THREE.Material): boolean {
   return /Body_00_SKIN/.test(material.name);
 }
 
+/** MToonマテリアルのうち、脚などBodyの艶（matcap＋リムライト）を上書きする対象を表した型 */
+type SkinGlossMaterial = THREE.Material & {
+  isMToonMaterial: true;
+  matcapFactor: THREE.Color;
+  matcapTexture: THREE.Texture | null;
+  rimLightingMixFactor: number;
+  parametricRimColorFactor: THREE.Color;
+  parametricRimFresnelPowerFactor: number;
+  parametricRimLiftFactor: number;
+};
+
+function isSkinGlossMaterial(material: THREE.Material): material is SkinGlossMaterial {
+  return (
+    (material as { isMToonMaterial?: boolean }).isMToonMaterial === true &&
+    !(material as { isOutline?: boolean }).isOutline &&
+    isBodyMaterial(material)
+  );
+}
+
+/** しずくの黒レザードレスVRMから抽出した艶matcap。キャラを問わず共通で使う */
+const SKIN_GLOSS_MATCAP_URL = "/textures/skin-gloss-matcap.png";
+
+/** 「普通」はしずくのVRMに実際に入っている値、「強」はそれより強めた版 */
+const SKIN_GLOSS_PRESETS: Record<
+  "normal" | "strong",
+  { matcap: number; rimColor: number; fresnel: number; lift: number }
+> = {
+  normal: { matcap: 0.09, rimColor: 0.00155, fresnel: 100, lift: 0.1 },
+  strong: { matcap: 0.18, rimColor: 0.00155, fresnel: 100, lift: 0.1 },
+};
+
 /**
  * 衣装元のBodyには頭の下地まで含まれる。別体型へ重ねると顔より手前へ出るため、
  * 頭ボーンに追従する三角形だけを除き、首より下の肌補完は残す。
@@ -295,6 +326,7 @@ export function VrmModel({
   mouthTextureUrl = null,
   bodySkinColor = null,
   bodySkinSourceColor = null,
+  skinGlossLevel = null,
   initialView = null,
   minCameraDistance = 0,
   fitCamera = true,
@@ -322,6 +354,7 @@ export function VrmModel({
   mouthTextureUrl?: string | null;
   bodySkinColor?: string | null;
   bodySkinSourceColor?: string | null;
+  skinGlossLevel?: "normal" | "strong" | null;
   initialView?: StageViewState | null;
   minCameraDistance?: number;
   fitCamera?: boolean;
@@ -449,6 +482,83 @@ export function VrmModel({
       for (const texture of recoloredMaps.values()) texture.dispose();
     };
   }, [bodySkinColor, bodySkinSourceColor, vrm]);
+
+  // Bodyの艶（matcap＋リムライト）を選んだ強さで上書きする。しずくのVRMから
+  // 抽出した共通matcap画像を使うため、キャラを問わず同じ見た目の光沢になる。
+  // 未指定時は何もしない＝読み込み時の既定（addSkinSheenまたは各VRM内蔵の値）のまま
+  useEffect(() => {
+    if (!vrm || !skinGlossLevel) return;
+    const preset = SKIN_GLOSS_PRESETS[skinGlossLevel];
+
+    const targets: SkinGlossMaterial[] = [];
+    vrm.scene.traverse((obj) => {
+      if (!(obj instanceof THREE.Mesh)) return;
+      const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+      for (const material of materials) {
+        if (isSkinGlossMaterial(material)) targets.push(material);
+      }
+    });
+    if (targets.length === 0) return;
+
+    let cancelled = false;
+    const originals = new Map<
+      SkinGlossMaterial,
+      {
+        matcapFactor: THREE.Color;
+        matcapTexture: THREE.Texture | null;
+        rimLightingMixFactor: number;
+        parametricRimColorFactor: THREE.Color;
+        parametricRimFresnelPowerFactor: number;
+        parametricRimLiftFactor: number;
+      }
+    >();
+    for (const material of targets) {
+      originals.set(material, {
+        matcapFactor: material.matcapFactor.clone(),
+        matcapTexture: material.matcapTexture,
+        rimLightingMixFactor: material.rimLightingMixFactor,
+        parametricRimColorFactor: material.parametricRimColorFactor.clone(),
+        parametricRimFresnelPowerFactor: material.parametricRimFresnelPowerFactor,
+        parametricRimLiftFactor: material.parametricRimLiftFactor,
+      });
+    }
+
+    const loadedTextures: THREE.Texture[] = [];
+    const loader = new THREE.TextureLoader();
+    loader.load(SKIN_GLOSS_MATCAP_URL, (texture) => {
+      if (cancelled) {
+        texture.dispose();
+        return;
+      }
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.flipY = false;
+      texture.needsUpdate = true;
+      loadedTextures.push(texture);
+      for (const material of targets) {
+        material.matcapFactor.setScalar(preset.matcap);
+        material.matcapTexture = texture;
+        material.rimLightingMixFactor = 1;
+        material.parametricRimColorFactor.setScalar(preset.rimColor);
+        material.parametricRimFresnelPowerFactor = preset.fresnel;
+        material.parametricRimLiftFactor = preset.lift;
+        material.needsUpdate = true;
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      for (const [material, original] of originals) {
+        material.matcapFactor.copy(original.matcapFactor);
+        material.matcapTexture = original.matcapTexture;
+        material.rimLightingMixFactor = original.rimLightingMixFactor;
+        material.parametricRimColorFactor.copy(original.parametricRimColorFactor);
+        material.parametricRimFresnelPowerFactor = original.parametricRimFresnelPowerFactor;
+        material.parametricRimLiftFactor = original.parametricRimLiftFactor;
+        material.needsUpdate = true;
+      }
+      for (const texture of loadedTextures) texture.dispose();
+    };
+  }, [skinGlossLevel, vrm]);
 
   // VRoid共通UVを使い、顔の形状や表情モーフはベースキャラのまま、
   // 瞳・眉・口の画像だけを差し替える。読み直し時は必ず元の画像へ戻す。

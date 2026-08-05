@@ -18,6 +18,8 @@ function AppearanceLayers({
   mouthTextureUrl,
   bodySkinColor,
   bodySkinSourceColor,
+  baseSkinSourceColor,
+  skinGlossLevel,
   initialView,
   minCameraDistance,
   motionUrl,
@@ -37,6 +39,8 @@ function AppearanceLayers({
   mouthTextureUrl: string | null;
   bodySkinColor: string | null;
   bodySkinSourceColor: string | null;
+  baseSkinSourceColor: string | null;
+  skinGlossLevel: "normal" | "strong" | null;
   initialView: StageViewState | null;
   minCameraDistance: number;
   motionUrl: string;
@@ -93,6 +97,9 @@ function AppearanceLayers({
         irisTextureUrl={irisTextureUrl}
         browsTextureUrl={browsTextureUrl}
         mouthTextureUrl={mouthTextureUrl}
+        bodySkinColor={bodySkinColor}
+        bodySkinSourceColor={baseSkinSourceColor}
+        skinGlossLevel={skinGlossLevel}
         initialView={initialView}
         minCameraDistance={minCameraDistance}
         syncMotion={hasOutfit || hasHair}
@@ -111,6 +118,7 @@ function AppearanceLayers({
           materialMode="bodyAndClothes"
           bodySkinColor={bodySkinColor}
           bodySkinSourceColor={bodySkinSourceColor}
+          skinGlossLevel={skinGlossLevel}
           fitCamera={false}
           syncMotion
           modelScale={[outfitScale, outfitScale, outfitScale * outfitDepthScale]}
@@ -152,6 +160,8 @@ export function VrmCanvas({
   mouthTextureUrl = null,
   bodySkinColor = null,
   bodySkinSourceColor = null,
+  baseSkinSourceColor = null,
+  skinGlossLevel = null,
   initialView = null,
   onViewChange,
   motionUrl,
@@ -171,6 +181,8 @@ export function VrmCanvas({
   mouthTextureUrl?: string | null;
   bodySkinColor?: string | null;
   bodySkinSourceColor?: string | null;
+  baseSkinSourceColor?: string | null;
+  skinGlossLevel?: "normal" | "strong" | null;
   initialView?: StageViewState | null;
   onViewChange?: (view: StageViewState) => void;
   motionUrl: string;
@@ -232,6 +244,8 @@ export function VrmCanvas({
         mouthTextureUrl={mouthTextureUrl}
         bodySkinColor={bodySkinColor}
         bodySkinSourceColor={bodySkinSourceColor}
+        baseSkinSourceColor={baseSkinSourceColor}
+        skinGlossLevel={skinGlossLevel}
         motionUrl={motionUrl}
         expression={expression}
         talking={talking}
