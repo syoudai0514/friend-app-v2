@@ -94,7 +94,7 @@ function applyBoneOffset(
  * 腕を下ろした静止姿勢。normalizedボーンは「回転0 = T-pose」が基準なので絶対角度で指定する。
  * 計測時に一度restポーズへ戻すと消えるため、関数として切り出して測り終えたら掛け直す。
  */
-function applyArmDownPose(vrm: VRM): void {
+export function applyArmDownPose(vrm: VRM): void {
   const armDown = Math.PI * 0.42;
   const leftUpperArm = vrm.humanoid.getNormalizedBoneNode("leftUpperArm");
   const rightUpperArm = vrm.humanoid.getNormalizedBoneNode("rightUpperArm");
@@ -304,7 +304,7 @@ export function VrmModel({
   modelOffsetY?: number;
   modelOffsetZ?: number;
   onMeasured?: (bounds: ModelBounds) => void;
-  onReady?: () => void;
+  onReady?: (vrm: VRM) => void;
   onError?: () => void;
 }) {
   const { vrm, error } = useVrm(url);
@@ -349,7 +349,7 @@ export function VrmModel({
   // 表示対象のパーツを固定してから親へ準備完了を伝える。これによりベース側を
   // 隠すタイミングでも、一瞬だけ衣装元の全身が混ざる状態を作らない。
   useEffect(() => {
-    if (vrm) onReady?.();
+    if (vrm) onReady?.(vrm);
   }, [vrm, onReady]);
 
   // 衣装側のBody形状を一緒に使うことで、VRoidの書き出し時に省かれた身体の面を補う。

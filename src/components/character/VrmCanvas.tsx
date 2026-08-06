@@ -2,11 +2,31 @@
 
 import { OrbitControls } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
-import { useCallback, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import * as THREE from "three";
+import type { VRM } from "@pixiv/three-vrm";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import type { Expression } from "@/lib/expressions";
+import { buildBodyCollider, fitClothingToBody, type BodyCollider } from "./fit-clothes";
 import type { StageViewState } from "./stage-view";
-import { VrmModel, type ModelBounds } from "./VrmModel";
+import { applyArmDownPose, VrmModel, type ModelBounds } from "./VrmModel";
+
+/** 服だけ／体だけを集める。マテリアル名の規則は VrmModel 側と揃えている */
+function collectMeshesByMaterial(
+  vrm: VRM,
+  match: (material: THREE.Material) => boolean,
+): THREE.Mesh[] {
+  const meshes: THREE.Mesh[] = [];
+  vrm.scene.traverse((obj) => {
+    if (!(obj instanceof THREE.Mesh)) return;
+    const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+    // アウトライン専用マテリアルは実体と同じジオメトリを共有するので数に入れない
+    if (materials.some((m) => match(m) && !(m as { isOutline?: boolean }).isOutline)) {
+      meshes.push(obj);
+    }
+  });
+  return meshes;
+}
 
 function AppearanceLayers({
   url,
@@ -54,8 +74,22 @@ function AppearanceLayers({
   const [baseBounds, setBaseBounds] = useState<ModelBounds | null>(null);
   const [outfitBounds, setOutfitBounds] = useState<ModelBounds | null>(null);
   const [hairBounds, setHairBounds] = useState<ModelBounds | null>(null);
+  const [baseVrm, setBaseVrm] = useState<VRM | null>(null);
+  const [outfitVrm, setOutfitVrm] = useState<VRM | null>(null);
+  const colliderRef = useRef<{ vrm: VRM; collider: BodyCollider } | null>(null);
 
   const onBaseBounds = useCallback((bounds: ModelBounds) => setBaseBounds(bounds), []);
+  const onBaseReady = useCallback(
+    (vrm: VRM) => {
+      setBaseVrm(vrm);
+      onReady?.();
+    },
+    [onReady],
+  );
+  const onOutfitVrmReady = useCallback((vrm: VRM) => {
+    setOutfitVrm(vrm);
+    setOutfitReady(true);
+  }, []);
   const onOutfitBounds = useCallback((bounds: ModelBounds) => setOutfitBounds(bounds), []);
   const onHairBounds = useCallback((bounds: ModelBounds) => setHairBounds(bounds), []);
 
@@ -84,6 +118,45 @@ function AppearanceLayers({
     ? baseBounds!.head!.z - hairBounds!.head!.z * hairScale
     : 0;
 
+  // 借りた服が本人の体を突き抜けないよう、服のメッシュを体の外側へ押し出す。
+  // 拡縮・足元合わせが確定してから、両方を静止姿勢に固定して1回だけ焼き込む。
+  // 衣装や本人が変われば元のジオメトリへ戻してから測り直す。
+  useEffect(() => {
+    if (!baseVrm || !outfitVrm || !baseBounds || !outfitBounds) return;
+
+    const clothes = collectMeshesByMaterial(outfitVrm, (m) => /_CLOTH(?:_| \(|$)/.test(m.name));
+    if (clothes.length === 0) return;
+
+    // 計測と同じく、姿勢に依存しない静止姿勢で焼き込む。スキニングはこのあとに
+    // 適用されるので、ここで動かした頂点はそのまま全モーションへ追従する
+    const restPose = (vrm: VRM) => {
+      vrm.humanoid.resetNormalizedPose();
+      vrm.humanoid.update();
+      vrm.scene.updateMatrixWorld(true);
+    };
+    restPose(baseVrm);
+    restPose(outfitVrm);
+
+    // 体の近傍検索構造は本人が変わらない限り使い回す（衣装を切り替えるたびに
+    // 1〜2万頂点ぶん作り直すのは無駄なので）
+    if (colliderRef.current?.vrm !== baseVrm) {
+      const body = collectMeshesByMaterial(baseVrm, (m) => /Body_00_SKIN/.test(m.name));
+      const collider = body.length > 0 ? buildBodyCollider(body) : null;
+      colliderRef.current = collider ? { vrm: baseVrm, collider } : null;
+    }
+    const cached = colliderRef.current;
+    if (!cached) return;
+
+    const handle = fitClothingToBody(clothes, cached.collider);
+
+    // restポーズで腕を下ろす姿勢が消えるので掛け直す（モーションが無いときの見た目用。
+    // モーションがあれば次のフレームで上書きされる）
+    applyArmDownPose(baseVrm);
+    applyArmDownPose(outfitVrm);
+
+    return () => handle.restore();
+  }, [baseVrm, outfitVrm, baseBounds, outfitBounds, outfitScale, outfitOffsetY]);
+
   return (
     <>
       <VrmModel
@@ -105,7 +178,7 @@ function AppearanceLayers({
         minCameraDistance={minCameraDistance}
         syncMotion={hasOutfit || hasHair}
         onMeasured={onBaseBounds}
-        onReady={onReady}
+        onReady={onBaseReady}
         onError={onError}
       />
       {outfitUrl && (
@@ -124,7 +197,7 @@ function AppearanceLayers({
           modelScale={[outfitScale, outfitScale, outfitScale * outfitDepthScale]}
           modelOffsetY={outfitOffsetY}
           onMeasured={onOutfitBounds}
-          onReady={() => setOutfitReady(true)}
+          onReady={onOutfitVrmReady}
         />
       )}
       {hairUrl && (
