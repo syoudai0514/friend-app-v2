@@ -1,39 +1,30 @@
 import * as THREE from "three";
 
 /**
- * 借りた服が着る人の体を突き抜けないよう、服のメッシュを体の外側へ押し出す。
+ * 借りた服が覆っている範囲の体を隠す。
  *
  * 借りた服は提供元の体型に合わせて作られた硬いスキンメッシュなので、着る側の方が
- * 大きい部位（胸・肩・背中）は必ず服の外へ出る。逆に服の面が体の内側へ入ると
- * 裏面カリングで消え、「上着の背中が割れて袖だけ浮いている」ようにも見える。
+ * 大きい部位（胸・肩・背中）は服を突き抜けて飛び出す。
  *
- * ここでは**体には一切触らず、服だけを動かす**。着る人の体型がそのまま服に出るので
- * 「本人が他人の服を着ている」自然な見た目になり、服のデザインも保たれる。
+ * **服を体の外へ押し出して避ける方法は捨てた。** 服の三角形は平らなので、頂点を
+ * 体表の外まで動かしても面の内側が胸のような曲面を貫いたままになり、押し出し量を
+ * 上げると今度は服のメッシュ自体が破綻して黒い塊が出る（実際に何度も往復した）。
  *
- * バインド姿勢で1回だけ焼き込む。スキニングはこのあとに適用されるため、
- * 変位はそのまま全モーションへ追従する。
+ * ここでは**VRoid自身と同じやり方**を取る。VRoidは服の下に隠れる体を
+ * テクスチャのアルファで消しており、それを借り物の服の形に合わせて実行時にやる。
+ * 覆われている体を消してしまえば、貫通は原理的に起きない。
+ *
+ * バインド姿勢で1回だけ判定する。スキニングはこのあとに適用されるため、
+ * 隠した面はそのまま全モーションで隠れ続ける。
  */
-
-/** 服の面を体からこれだけ浮かせる（m）。小さすぎるとチラつき、大きいと浮いて見える */
-const SURFACE_MARGIN = 0.005;
-/**
- * 襟ぐり・袖口・裾など、服の開いた縁（boundary edge）にだけ使う大きめの余裕（m）。
- * 縁が体すれすれを走ると、体と服が交互に前後してギザギザの継ぎ目に見えるため、
- * 縁だけははっきり浮かせて逃がす。
- */
-const BOUNDARY_MARGIN = 0.014;
-/** この距離より遠い体表しか無い頂点は「体から離れている」とみなして動かさない（m）。スカートの裾・ゆるい袖を守る */
-const SEARCH_RADIUS = 0.06;
-/** 1頂点あたりの押し出し量の上限（m）。破綻した入力で服が極端に膨らむのを防ぐ */
-const MAX_PUSH = 0.05;
-/** 変位を均すLaplacianの回数。境目が角張らないようにする */
-const SMOOTH_ITERATIONS = 4;
 
 interface Triangle {
   a: THREE.Vector3;
   b: THREE.Vector3;
   c: THREE.Vector3;
   normal: THREE.Vector3;
+  /** 服の開いた縁（襟ぐり・袖口・裾）に接する三角形か。体を隠す範囲を縁の手前で止めるのに使う */
+  nearBoundary: boolean;
 }
 
 /**
@@ -159,7 +150,7 @@ const _v5 = new THREE.Vector3();
 const _v6 = new THREE.Vector3();
 
 /** メッシュ群からワールド空間の三角形を集める */
-function collectTriangles(meshes: THREE.Mesh[]): Triangle[] {
+function collectTriangles(meshes: THREE.Mesh[], markBoundary = false): Triangle[] {
   const triangles: Triangle[] = [];
   const position = new THREE.Vector3();
   for (const mesh of meshes) {
@@ -172,6 +163,9 @@ function collectTriangles(meshes: THREE.Mesh[]): Triangle[] {
       position.fromBufferAttribute(attribute, i).applyMatrix4(mesh.matrixWorld);
       vertices.push(position.clone());
     }
+    const boundary = markBoundary
+      ? findBoundaryVertices(mesh.geometry, attribute.count)
+      : null;
     for (let i = 0; i + 2 < count; i += 3) {
       const ia = index ? index.getX(i) : i;
       const ib = index ? index.getX(i + 1) : i + 1;
@@ -180,6 +174,9 @@ function collectTriangles(meshes: THREE.Mesh[]): Triangle[] {
       const b = vertices[ib];
       const c = vertices[ic];
       if (!a || !b || !c) continue;
+      const nearBoundary = boundary
+        ? Boolean(boundary[ia] || boundary[ib] || boundary[ic])
+        : false;
       const normal = new THREE.Vector3()
         .subVectors(b, a)
         .cross(_v1.subVectors(c, a));
@@ -187,7 +184,7 @@ function collectTriangles(meshes: THREE.Mesh[]): Triangle[] {
       // 面積ゼロの縮退三角形は法線が定まらないので捨てる
       if (length < 1e-12) continue;
       normal.multiplyScalar(1 / length);
-      triangles.push({ a, b, c, normal });
+      triangles.push({ a, b, c, normal, nearBoundary });
     }
   }
   return triangles;
@@ -237,187 +234,116 @@ function findBoundaryVertices(geometry: THREE.BufferGeometry, vertexCount: numbe
   return boundary;
 }
 
-/** index から頂点の隣接表を作る（変位の平滑化に使う） */
-function buildAdjacency(geometry: THREE.BufferGeometry, vertexCount: number): number[][] {
-  const adjacency: number[][] = Array.from({ length: vertexCount }, () => []);
-  const index = geometry.index;
-  const count = index ? index.count : vertexCount;
-  for (let i = 0; i + 2 < count; i += 3) {
-    const ia = index ? index.getX(i) : i;
-    const ib = index ? index.getX(i + 1) : i + 1;
-    const ic = index ? index.getX(i + 2) : i + 2;
-    adjacency[ia].push(ib, ic);
-    adjacency[ib].push(ia, ic);
-    adjacency[ic].push(ia, ib);
-  }
-  return adjacency;
-}
-
-export interface ClothFitHandle {
-  /** 変位を取り消して元のジオメトリに戻す */
-  restore(): void;
-  /** 実際に動かした頂点の数。0なら突き抜けが無かった（またはフィット対象が見つからなかった） */
-  movedVertices: number;
-}
-
-/** 体側の近傍検索構造。同じ人を着せ替えるあいだは作り直さなくてよいので呼び出し側で使い回す */
-export interface BodyCollider {
-  readonly grid: TriangleGrid;
-}
+/** 服が覆っているとみなす、体表から服までの距離の上限（m） */
+const COVERED_RADIUS = 0.11;
 
 /**
- * 体の三角形から近傍検索構造を作る。
- * 呼ぶ前に matrixWorld が静止姿勢で更新されていること。
+ * 服が覆っている範囲の体を隠す。VRoid自身が「服の下の体」をテクスチャのアルファで
+ * 消しているのと同じことを、借り物の服の形に合わせて実行時にやる。
+ *
+ * 押し出し（fitClothingToBody）だけでは、服の三角形が平らなぶん胸のように
+ * 曲率の大きい部位を面の内側が貫いてしまい、体が黒い塊として飛び出す。
+ * **覆われている体を消してしまえば貫通は原理的に起きない。**
+ *
+ * 襟ぐり・袖口・裾に接する三角形は判定から除くので、服の開口部から見える肌は残る。
  */
-export function buildBodyCollider(bodyMeshes: THREE.Mesh[]): BodyCollider | null {
-  const triangles = collectTriangles(bodyMeshes);
-  if (triangles.length === 0) return null;
-  return { grid: new TriangleGrid(triangles, SEARCH_RADIUS) };
-}
-
-/**
- * clothMeshes を体の外側へ押し出す。
- * 呼ぶ前に服の matrixWorld が、collider を作ったときと**同じ静止姿勢で**更新されていること。
- */
-export function fitClothingToBody(
+export function maskBodyUnderClothing(
+  bodyMeshes: THREE.Mesh[],
   clothMeshes: THREE.Mesh[],
-  collider: BodyCollider,
-): ClothFitHandle {
-  const originals: Array<{ geometry: THREE.BufferGeometry; position: THREE.BufferAttribute }> = [];
+): { restore(): void; hiddenTriangles: number } {
+  const replacements: Array<{ mesh: THREE.Mesh; original: THREE.BufferGeometry }> = [];
   const restore = () => {
-    for (const { geometry, position } of originals) {
-      geometry.setAttribute("position", position);
-      geometry.computeVertexNormals();
-      geometry.computeBoundingBox();
-      geometry.computeBoundingSphere();
+    for (const { mesh, original } of replacements) {
+      const filtered = mesh.geometry;
+      mesh.geometry = original;
+      filtered.dispose();
     }
-    originals.length = 0;
+    replacements.length = 0;
   };
 
-  const { grid } = collider;
-  let movedVertices = 0;
+  const clothTriangles = collectTriangles(clothMeshes, true);
+  if (clothTriangles.length === 0) return { restore, hiddenTriangles: 0 };
+  const grid = new TriangleGrid(clothTriangles, COVERED_RADIUS);
+
+  let hiddenTriangles = 0;
   const candidates: Triangle[] = [];
   const worldVertex = new THREE.Vector3();
   const closest = new THREE.Vector3();
-  const best = new THREE.Vector3();
-  const bestNormal = new THREE.Vector3();
 
-  for (const mesh of clothMeshes) {
+  for (const mesh of bodyMeshes) {
     const attribute = mesh.geometry.getAttribute("position");
-    if (!attribute || !(attribute instanceof THREE.BufferAttribute)) continue;
-
+    if (!attribute) continue;
     const vertexCount = attribute.count;
-    // ワールド空間での押し出しベクトル。あとで平滑化してからローカルへ戻す
-    const displacement = new Float32Array(vertexCount * 3);
-    const boundary = findBoundaryVertices(mesh.geometry, vertexCount);
-    let meshMoved = 0;
+    const covered = new Uint8Array(vertexCount);
 
     for (let i = 0; i < vertexCount; i += 1) {
       worldVertex.fromBufferAttribute(attribute, i).applyMatrix4(mesh.matrixWorld);
-      grid.near(worldVertex, SEARCH_RADIUS, candidates);
-      if (candidates.length === 0) continue;
-
+      grid.near(worldVertex, COVERED_RADIUS, candidates);
       let bestDistanceSq = Infinity;
+      let bestNearBoundary = false;
       for (const triangle of candidates) {
         closestPointOnTriangle(worldVertex, triangle, closest);
         const distanceSq = closest.distanceToSquared(worldVertex);
         if (distanceSq < bestDistanceSq) {
           bestDistanceSq = distanceSq;
-          best.copy(closest);
-          bestNormal.copy(triangle.normal);
+          bestNearBoundary = triangle.nearBoundary;
         }
       }
-      if (bestDistanceSq > SEARCH_RADIUS * SEARCH_RADIUS) continue;
-
-      // 体表からの符号付き距離。マイナスなら体に食い込んでいる
-      const signed = _v1.subVectors(worldVertex, best).dot(bestNormal);
-      const margin = boundary[i] ? BOUNDARY_MARGIN : SURFACE_MARGIN;
-      const push = margin - signed;
-      if (push <= 0) continue;
-
-      const amount = Math.min(push, MAX_PUSH);
-      displacement[i * 3] = bestNormal.x * amount;
-      displacement[i * 3 + 1] = bestNormal.y * amount;
-      displacement[i * 3 + 2] = bestNormal.z * amount;
-      meshMoved += 1;
+      // 服の開いた縁（襟ぐり・袖口・裾）がいちばん近い頂点は肌を残す。
+      // ここを一緒に隠すと、裾のすぐ下など「服が終わっていて体が見えるべき所」まで
+      // 削れてしまい、スカートの下に黒い欠けができる（実際に1度やって出た）
+      if (bestDistanceSq <= COVERED_RADIUS * COVERED_RADIUS && !bestNearBoundary) {
+        covered[i] = 1;
+      }
     }
 
-    if (meshMoved === 0) continue;
-    movedVertices += meshMoved;
+    const geometry = mesh.geometry;
+    const index = geometry.index;
+    const sourceCount = index ? index.count : vertexCount;
+    const at = (offset: number) => (index ? index.getX(offset) : offset);
+    const sourceGroups =
+      geometry.groups.length > 0
+        ? geometry.groups
+        : [{ start: 0, count: sourceCount, materialIndex: 0 }];
+    const ranges = new Map<string, { start: number; count: number }>();
+    const indices: number[] = [];
+    let dropped = 0;
 
-    // 押し出した所と押し出していない所の境目が角張らないよう変位を均す。
-    // 頂点位置ではなく変位だけを均すので、服のディテールは失われない
-    const adjacency = buildAdjacency(mesh.geometry, vertexCount);
-    let current = displacement;
-    for (let iteration = 0; iteration < SMOOTH_ITERATIONS; iteration += 1) {
-      const next = new Float32Array(vertexCount * 3);
-      for (let i = 0; i < vertexCount; i += 1) {
-        const neighbours = adjacency[i];
-        if (neighbours.length === 0) {
-          next[i * 3] = current[i * 3];
-          next[i * 3 + 1] = current[i * 3 + 1];
-          next[i * 3 + 2] = current[i * 3 + 2];
+    for (const group of sourceGroups) {
+      const key = `${group.start}:${group.count}`;
+      if (ranges.has(key)) continue;
+      const start = indices.length;
+      const end = Math.min(group.start + group.count, sourceCount);
+      for (let offset = group.start; offset + 2 < end; offset += 3) {
+        const ia = at(offset);
+        const ib = at(offset + 1);
+        const ic = at(offset + 2);
+        // 3頂点のうち2つ以上が服の下なら落とす。「3つとも」にすると、胸の頂点のように
+        // 判定から漏れたものが1つあるだけで面が残り、そこだけ貫通して見える。
+        // 1つだけ覆われている三角形は開口部の際なので残し、肌が欠けないようにする
+        if (covered[ia] + covered[ib] + covered[ic] >= 2) {
+          dropped += 1;
           continue;
         }
-        let sx = current[i * 3];
-        let sy = current[i * 3 + 1];
-        let sz = current[i * 3 + 2];
-        for (const n of neighbours) {
-          sx += current[n * 3];
-          sy += current[n * 3 + 1];
-          sz += current[n * 3 + 2];
-        }
-        const weight = 1 / (neighbours.length + 1);
-        next[i * 3] = sx * weight;
-        next[i * 3 + 1] = sy * weight;
-        next[i * 3 + 2] = sz * weight;
+        indices.push(ia, ib, ic);
       }
-      current = next;
+      ranges.set(key, { start, count: indices.length - start });
     }
+    if (dropped === 0) continue;
 
-    // 平滑化で押し出しが足りなくなった分を補う（食い込みが残るより浮く方がまし）
-    for (let i = 0; i < vertexCount; i += 1) {
-      const ox = displacement[i * 3];
-      const oy = displacement[i * 3 + 1];
-      const oz = displacement[i * 3 + 2];
-      const originalLength = Math.hypot(ox, oy, oz);
-      if (originalLength === 0) continue;
-      const sx = current[i * 3];
-      const sy = current[i * 3 + 1];
-      const sz = current[i * 3 + 2];
-      const along = (sx * ox + sy * oy + sz * oz) / originalLength;
-      if (along >= originalLength) continue;
-      const deficit = (originalLength - along) / originalLength;
-      current[i * 3] = sx + ox * deficit;
-      current[i * 3 + 1] = sy + oy * deficit;
-      current[i * 3 + 2] = sz + oz * deficit;
+    const filtered = geometry.clone();
+    filtered.setIndex(indices);
+    filtered.clearGroups();
+    for (const group of sourceGroups) {
+      const range = ranges.get(`${group.start}:${group.count}`);
+      if (range) filtered.addGroup(range.start, range.count, group.materialIndex);
     }
-
-    // ワールドの変位をメッシュのローカル空間へ戻す（平行移動成分は乗せない）
-    const worldToLocal = new THREE.Matrix3().setFromMatrix4(
-      new THREE.Matrix4().copy(mesh.matrixWorld).invert(),
-    );
-    const fitted = attribute.clone();
-    const delta = new THREE.Vector3();
-    for (let i = 0; i < vertexCount; i += 1) {
-      delta
-        .set(current[i * 3], current[i * 3 + 1], current[i * 3 + 2])
-        .applyMatrix3(worldToLocal);
-      fitted.setXYZ(
-        i,
-        attribute.getX(i) + delta.x,
-        attribute.getY(i) + delta.y,
-        attribute.getZ(i) + delta.z,
-      );
-    }
-    fitted.needsUpdate = true;
-
-    originals.push({ geometry: mesh.geometry, position: attribute });
-    mesh.geometry.setAttribute("position", fitted);
-    mesh.geometry.computeVertexNormals();
-    mesh.geometry.computeBoundingBox();
-    mesh.geometry.computeBoundingSphere();
+    filtered.computeBoundingBox();
+    filtered.computeBoundingSphere();
+    replacements.push({ mesh, original: geometry });
+    mesh.geometry = filtered;
+    hiddenTriangles += dropped;
   }
 
-  return { restore, movedVertices };
+  return { restore, hiddenTriangles };
 }

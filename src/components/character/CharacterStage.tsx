@@ -131,6 +131,10 @@ export function CharacterStage({
         }
         bodySkinColor={skinToneColor}
         bodySkinSourceColor={skinToneColor ? ownSkinColor : null}
+        // 借り物の服は覆う範囲が本人の衣装と違うため、VRoidがアルファで消した
+        // 「服の下の体」がそのままだと穴として露出する。借りているあいだだけ
+        // 穴の無い体テクスチャ（scripts/build-complete-skins.py で生成）に差し替える
+        completeSkinUrl={look.outfit ? `/skin/${personaId}.webp` : null}
         skinGlossLevel={look.skinGloss ?? null}
         initialView={initialView}
         onViewChange={rememberView}

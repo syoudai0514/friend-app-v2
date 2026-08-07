@@ -2,12 +2,12 @@
 
 import { OrbitControls } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useState, type RefObject } from "react";
 import * as THREE from "three";
 import type { VRM } from "@pixiv/three-vrm";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import type { Expression } from "@/lib/expressions";
-import { buildBodyCollider, fitClothingToBody, type BodyCollider } from "./fit-clothes";
+import { maskBodyUnderClothing } from "./fit-clothes";
 import type { StageViewState } from "./stage-view";
 import { applyArmDownPose, VrmModel, type ModelBounds } from "./VrmModel";
 
@@ -38,6 +38,7 @@ function AppearanceLayers({
   mouthTextureUrl,
   bodySkinColor,
   bodySkinSourceColor,
+  completeSkinUrl,
   skinGlossLevel,
   initialView,
   minCameraDistance,
@@ -58,6 +59,7 @@ function AppearanceLayers({
   mouthTextureUrl: string | null;
   bodySkinColor: string | null;
   bodySkinSourceColor: string | null;
+  completeSkinUrl: string | null;
   skinGlossLevel: "normal" | "strong" | null;
   initialView: StageViewState | null;
   minCameraDistance: number;
@@ -76,7 +78,6 @@ function AppearanceLayers({
   const [hairBounds, setHairBounds] = useState<ModelBounds | null>(null);
   const [baseVrm, setBaseVrm] = useState<VRM | null>(null);
   const [outfitVrm, setOutfitVrm] = useState<VRM | null>(null);
-  const colliderRef = useRef<{ vrm: VRM; collider: BodyCollider } | null>(null);
 
   const onBaseBounds = useCallback((bounds: ModelBounds) => setBaseBounds(bounds), []);
   const onBaseReady = useCallback(
@@ -137,24 +138,17 @@ function AppearanceLayers({
     restPose(baseVrm);
     restPose(outfitVrm);
 
-    // 体の近傍検索構造は本人が変わらない限り使い回す（衣装を切り替えるたびに
-    // 1〜2万頂点ぶん作り直すのは無駄なので）
-    if (colliderRef.current?.vrm !== baseVrm) {
-      const body = collectMeshesByMaterial(baseVrm, (m) => /Body_00_SKIN/.test(m.name));
-      const collider = body.length > 0 ? buildBodyCollider(body) : null;
-      colliderRef.current = collider ? { vrm: baseVrm, collider } : null;
-    }
-    const cached = colliderRef.current;
-    if (!cached) return;
-
-    const handle = fitClothingToBody(clothes, cached.collider);
+    // 服が覆っている範囲の体を隠して貫通を断つ。VRoid自身が「服の下の体」を
+    // テクスチャのアルファで消しているのと同じことを、借り物の服の形に合わせてやる
+    const body = collectMeshesByMaterial(baseVrm, (m) => /Body_00_SKIN/.test(m.name));
+    const masked = maskBodyUnderClothing(body, clothes);
 
     // restポーズで腕を下ろす姿勢が消えるので掛け直す（モーションが無いときの見た目用。
     // モーションがあれば次のフレームで上書きされる）
     applyArmDownPose(baseVrm);
     applyArmDownPose(outfitVrm);
 
-    return () => handle.restore();
+    return () => masked.restore();
   }, [baseVrm, outfitVrm, baseBounds, outfitBounds, outfitScale, outfitOffsetY]);
 
   return (
@@ -173,6 +167,7 @@ function AppearanceLayers({
         mouthTextureUrl={mouthTextureUrl}
         bodySkinColor={bodySkinColor}
         bodySkinSourceColor={bodySkinSourceColor}
+        completeSkinUrl={completeSkinUrl}
         skinGlossLevel={skinGlossLevel}
         initialView={initialView}
         minCameraDistance={minCameraDistance}
@@ -233,6 +228,7 @@ export function VrmCanvas({
   mouthTextureUrl = null,
   bodySkinColor = null,
   bodySkinSourceColor = null,
+  completeSkinUrl = null,
   skinGlossLevel = null,
   initialView = null,
   onViewChange,
@@ -253,6 +249,7 @@ export function VrmCanvas({
   mouthTextureUrl?: string | null;
   bodySkinColor?: string | null;
   bodySkinSourceColor?: string | null;
+  completeSkinUrl?: string | null;
   skinGlossLevel?: "normal" | "strong" | null;
   initialView?: StageViewState | null;
   onViewChange?: (view: StageViewState) => void;
@@ -315,6 +312,7 @@ export function VrmCanvas({
         mouthTextureUrl={mouthTextureUrl}
         bodySkinColor={bodySkinColor}
         bodySkinSourceColor={bodySkinSourceColor}
+        completeSkinUrl={completeSkinUrl}
         skinGlossLevel={skinGlossLevel}
         motionUrl={motionUrl}
         expression={expression}

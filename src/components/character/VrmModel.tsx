@@ -267,6 +267,7 @@ export function VrmModel({
   mouthTextureUrl = null,
   bodySkinColor = null,
   bodySkinSourceColor = null,
+  completeSkinUrl = null,
   skinGlossLevel = null,
   initialView = null,
   minCameraDistance = 0,
@@ -294,6 +295,8 @@ export function VrmModel({
   mouthTextureUrl?: string | null;
   bodySkinColor?: string | null;
   bodySkinSourceColor?: string | null;
+  /** 借り物の服を着るときに使う「穴の無い体テクスチャ」のURL */
+  completeSkinUrl?: string | null;
   skinGlossLevel?: "normal" | "strong" | null;
   initialView?: StageViewState | null;
   minCameraDistance?: number;
@@ -352,46 +355,106 @@ export function VrmModel({
     if (vrm) onReady?.(vrm);
   }, [vrm, onReady]);
 
-  // 衣装側のBody形状を一緒に使うことで、VRoidの書き出し時に省かれた身体の面を補う。
-  // Body画像に焼き込まれた下着・靴下・陰影は残し、肌に当たる色だけ着る側へ合わせる。
-  // Face_00_SKINも同時に合わせないと、本人の肌色を変えたときに顔だけ元の色のまま
-  // 残り、首の境目で二色に分かれて見える事故になる（衣装元の顔は元々非表示なので
-  // ここに含めても実害はない）。
+  // 肌のテクスチャを決める。差し替え（穴の無い体）と塗り替え（肌の色）の両方が
+  // `material.map` を触るので、取り合いにならないよう1つのeffectにまとめてある。
+  //
+  // 1. completeSkinUrl があれば Body_00_SKIN をそれに差し替える。
+  //    VRoidは服の下に隠れる体をテクスチャのアルファで消しており（alphaMode=MASK）、
+  //    借り物の服は覆う範囲が違うため、そのままだと欠損部が穴として露出する
+  //    （なぎは胴体の25%、れなはバスト帯の94%が消えている）。
+  //    scripts/build-complete-skins.py で作った穴の無い版へ入れ替えて塞ぐ。
+  // 2. 肌の色指定があれば、その結果へ塗り替えをかける。
+  //    Face_00_SKINも同時に塗らないと顔だけ元の色のまま残り、首の境目で
+  //    二色に分かれて見える（顔は差し替え対象ではないので塗り替えのみ）。
   useEffect(() => {
-    if (!vrm || !bodySkinColor || !bodySkinSourceColor) return;
-    const source = parseHexColor(bodySkinSourceColor);
-    const target = parseHexColor(bodySkinColor);
-    if (!source || !target || source.every((channel, index) => channel === target[index])) return;
+    if (!vrm) return;
+    const source = bodySkinSourceColor ? parseHexColor(bodySkinSourceColor) : null;
+    const target = bodySkinColor ? parseHexColor(bodySkinColor) : null;
+    const recolors = Boolean(
+      source && target && !source.every((channel, index) => channel === target[index]),
+    );
+    if (!completeSkinUrl && !recolors) return;
 
+    let cancelled = false;
     const originalMaps = new Map<TexturedMaterial, THREE.Texture | null>();
-    const recoloredMaps = new Map<THREE.Texture, THREE.Texture>();
-    vrm.scene.traverse((obj) => {
-      if (!(obj instanceof THREE.Mesh)) return;
-      const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
-      for (const material of materials) {
-        const isSkin = isBodyMaterial(material) || isFaceSkinMaterial(material);
-        if (!isSkin || !hasTextureMap(material) || !material.map) continue;
-        const original = material.map;
-        let recolored = recoloredMaps.get(original);
-        if (!recolored) {
-          recolored = recolorBodyTexture(original, source, target) ?? undefined;
-          if (!recolored) continue;
-          recoloredMaps.set(original, recolored);
+    const createdTextures: THREE.Texture[] = [];
+
+    const collect = (predicate: (material: THREE.Material) => boolean) => {
+      const found: TexturedMaterial[] = [];
+      vrm.scene.traverse((obj) => {
+        if (!(obj instanceof THREE.Mesh)) return;
+        const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const material of materials) {
+          if (predicate(material) && hasTextureMap(material) && material.map) found.push(material);
         }
-        originalMaps.set(material, original);
-        material.map = recolored;
+      });
+      return found;
+    };
+
+    /** 差し替え後（または元のまま）のテクスチャへ、必要なら塗り替えをかけて適用する */
+    const apply = (materials: TexturedMaterial[], base: THREE.Texture | null) => {
+      if (cancelled) return;
+      const recoloredCache = new Map<THREE.Texture, THREE.Texture>();
+      for (const material of materials) {
+        const from = base ?? material.map;
+        if (!from) continue;
+        let next = from;
+        if (recolors && source && target) {
+          const cached = recoloredCache.get(from);
+          if (cached) {
+            next = cached;
+          } else {
+            const recolored = recolorBodyTexture(from, source, target);
+            if (recolored) {
+              recoloredCache.set(from, recolored);
+              createdTextures.push(recolored);
+              next = recolored;
+            }
+          }
+        }
+        if (next === material.map) continue;
+        if (!originalMaps.has(material)) originalMaps.set(material, material.map);
+        material.map = next;
         material.needsUpdate = true;
       }
-    });
+    };
+
+    const bodyMaterials = collect(isBodyMaterial);
+    const faceMaterials = collect(isFaceSkinMaterial);
+
+    // 顔は差し替えず、肌の色だけ体に合わせる
+    apply(faceMaterials, null);
+
+    if (completeSkinUrl) {
+      const loader = new THREE.TextureLoader();
+      loader.load(completeSkinUrl, (texture) => {
+        if (cancelled) {
+          texture.dispose();
+          return;
+        }
+        // VRM内蔵テクスチャと同じ扱いにしないと色空間・向きがずれる
+        const reference = bodyMaterials[0]?.map;
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.flipY = reference ? reference.flipY : false;
+        texture.wrapS = reference?.wrapS ?? THREE.ClampToEdgeWrapping;
+        texture.wrapT = reference?.wrapT ?? THREE.ClampToEdgeWrapping;
+        texture.needsUpdate = true;
+        createdTextures.push(texture);
+        apply(bodyMaterials, texture);
+      });
+    } else {
+      apply(bodyMaterials, null);
+    }
 
     return () => {
+      cancelled = true;
       for (const [material, map] of originalMaps) {
         material.map = map;
         material.needsUpdate = true;
       }
-      for (const texture of recoloredMaps.values()) texture.dispose();
+      for (const texture of createdTextures) texture.dispose();
     };
-  }, [bodySkinColor, bodySkinSourceColor, vrm]);
+  }, [bodySkinColor, bodySkinSourceColor, completeSkinUrl, vrm]);
 
   // Bodyの艶（matcap＋リムライト）を選んだ強さで上書きする。しずくのVRMから
   // 抽出した共通matcap画像を使うため、キャラを問わず同じ見た目の光沢になる。
