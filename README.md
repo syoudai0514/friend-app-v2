@@ -58,6 +58,12 @@ http://localhost:3000 を開いてください。
 
 ---
 
+## mainへpushする（Windows）
+
+リポジトリ直下の `push-main.bat` をダブルクリックすると、現在の `main` ブランチをGitHubへpushできます。別ブランチで実行した場合は安全のため中止します。
+
+---
+
 ## 見た目のしくみ（VRM）
 
 ```
