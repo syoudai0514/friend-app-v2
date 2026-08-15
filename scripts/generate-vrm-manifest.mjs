@@ -33,6 +33,7 @@ const DISPLAY_NAMES = {
     leather: "黒レザードレス",
     fftifa: "FFVティファ",
     onepiece: "ワンピース",
+    cardigan: "私服2",
   },
   nagi: {
     default: "スタンダード",
