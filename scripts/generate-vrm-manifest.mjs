@@ -41,6 +41,7 @@ const DISPLAY_NAMES = {
   },
   hinata: {
     casual: "私服（Tシャツショーパン）",
+    uniform: "制服ルーズ",
   },
   rena: {
     default: "スタンダード",
