@@ -39,6 +39,9 @@ const DISPLAY_NAMES = {
   nagi: {
     default: "スタンダード",
   },
+  hinata: {
+    casual: "私服（Tシャツショーパン）",
+  },
   rena: {
     default: "スタンダード",
     work: "仕事着",
