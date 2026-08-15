@@ -50,7 +50,7 @@ export const VRM_MANIFEST: Record<string, PartOption[]> = {
   "shizuku": [
     {
       "id": "cardigan",
-      "name": "私服2",
+      "name": "戦闘着1",
       "rarity": "NR"
     },
     {
@@ -61,6 +61,11 @@ export const VRM_MANIFEST: Record<string, PartOption[]> = {
     {
       "id": "fftifa",
       "name": "FFVティファ",
+      "rarity": "NR"
+    },
+    {
+      "id": "gunshorts",
+      "name": "ショーパン",
       "rarity": "NR"
     },
     {
