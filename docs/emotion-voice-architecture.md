@@ -1,9 +1,9 @@
 # friend-app-v2 情緒表現・自然音声アーキテクチャ設計
 
-Status: **REVIEWED / APPROVE WITH CHANGES 反映済み**  
+Status: **DESIGN APPROVED PENDING PHASE 0 PoC**  
 Target repository: `syoudai0514/friend-app-v2`  
 Reviewed against current `main`: 2026-08-30  
-Scope: **設計のみ。実装は本設計のPoC条件を満たしてから開始する。**
+Scope: **設計のみ。Phase 0 Technical PoC がPASSするまで本実装へ進まない。**
 
 ---
 
@@ -11,7 +11,14 @@ Scope: **設計のみ。実装は本設計のPoC条件を満たしてから開�
 
 friend-app-v2 の会話を、単調な「セリフだけのチャット」から、**感情の変化・視線・間・場の空気・実際の発言・自然音声・VRM演技が分離されつつ同期する会話体験**へ発展させる。
 
-今回の設計で最も重要なのは、LLMが決める「演技の意味」と、実機ランタイムが決める「具体的な再生方法」を分離することである。
+重要原則は以下。
+
+- LLMは「演技の意味」だけを決める
+- RuntimeがVRM・Audio・lip syncの具体制御を決める
+- streaming preview と persistent state を分離する
+- `turn_complete` を唯一のcanonical transaction boundaryとする
+- narrationは表示するがTTSしない
+- `ChatMessage.text = speech` を維持する
 
 ---
 
@@ -22,20 +29,19 @@ CURRENTでは以下を確認済み。
 - `src/lib/prompt.ts`: `[expression] speech [memory: ...]` の文字列protocol
 - `src/app/chat/page.tsx`: Geminiのtext streamを受信し、expression/memoryタグを剥がして `replaceLastModel(text)`
 - `src/lib/types.ts`: `ChatMessage = { role, text, at }`
+- `src/lib/store.tsx`: state変更ごとにAppState全体をlocalStorageへ永続化
 - `src/lib/speech.ts`: ユーザー側 SpeechRecognition のみ
 - `VrmModel.tsx`: `talking=true` 中に `aa` を周期的に動かす簡易口パク
 - `VrmModel.tsx`: shy表現でhead/eyesのbone offsetを直接適用
 - VRMAモーションは既に複数導入済み
 
-したがって、既存互換を壊さず、会話・演技・音声を段階的に分離する。
+CURRENTの `addMessage({ role: "model", text: "" })` → `replaceLastModel()` はstream途中のpartial stateまでlocalStorageへ書き得る。新protocolではこの方式をモデル返答streamingに使わない。
 
 ---
 
 # Part A. Canonical Dialogue Contract
 
 ## 3. 3層分離
-
-1回のモデル返答を以下に分ける。
 
 ### 3.1 narration
 
@@ -88,13 +94,14 @@ export type PauseCue = "none" | "short" | "medium";
 export interface ModelPerformanceIntent {
   version: 1;
   expression: EmotionId;
-  emotionIntensity?: number; // 0..1
+  emotionIntensity?: number;
   motionCue?: MotionCue;
   voiceStyle?: VoiceStyleId;
   pause?: PauseCue;
 }
 
 export interface ModelTurn {
+  protocolVersion: 1;
   narration?: string;
   speech: string;
   memory?: string | null;
@@ -116,21 +123,11 @@ export interface ChatMessage {
 }
 ```
 
-モデル返答では必ず:
-
-```text
-ChatMessage.text = ModelTurn.speech
-```
-
-とする。
-
-これにより旧saveはそのまま読み、新saveも旧コードでspeechだけは表示できる。
+モデル返答では必ず `ChatMessage.text = ModelTurn.speech` とする。
 
 ---
 
 ## 4. narration設計
-
-### 4.1 原則
 
 - **default = none**
 - 通常: 0〜50文字 / 最大1文
@@ -138,14 +135,10 @@ ChatMessage.text = ModelTurn.speech
 - show, don't explain
 - 心情の直接説明を避ける
 - ユーザーの行動を勝手に確定しない
-- 同じ「頬を赤らめる」「視線をそらす」を連打しない
+- 同じ描写を連打しない
 - narrationをspeechで言い直さない
 
-### 4.2 recentPerformance
-
-`ChatMessage.text = speech` を維持するため、Gemini通常historyにはnarrationを混ぜない。
-
-ただし反復防止のため、直近2ターンだけ別入力として渡す。
+Gemini通常historyにはnarrationを混ぜない。反復防止のため、直近2ターンのみ別入力で渡す。
 
 ```ts
 recentPerformance: Array<{
@@ -157,13 +150,13 @@ recentPerformance: Array<{
 
 ---
 
-## 5. Gemini出力protocol — P0修正
+# Part B. DialogueProtocol / Transaction Boundary
+
+## 5. Gemini出力protocol
 
 ### 5.1 禁止
 
-**Gemini自身にNDJSON/SSEイベントを書かせない。**
-
-Geminiのstream chunkは独立JSONイベントではなく、最終JSONを構成するpartial JSON stringであるため、モデル出力をそのまま1行JSONイベントとして扱う設計は採用しない。
+**Gemini自身にNDJSON/SSEを書かせない。**
 
 ### 5.2 正式構成
 
@@ -181,25 +174,85 @@ GeminiにはJSON Schemaで `ModelTurn` を強制する。
 
 ### 5.3 server-owned events
 
-ブラウザへはサーバーが独自eventへ変換して送る。
-
-例:
+全eventに `turnId` を必須で付与する。
 
 ```json
-{"type":"performance","expression":"shy","emotionIntensity":0.7,"motionCue":"look_away","voiceStyle":"soft"}
-{"type":"narration","text":"しずくは一瞬言葉を止め、視線を横へ逃がした。"}
-{"type":"speech_delta","text":"……急に"}
-{"type":"speech_delta","text":"そういうこと言うんですね。"}
-{"type":"turn_complete","turn":{...canonical ModelTurn...}}
+{"type":"performance","turnId":"...","expression":"shy","emotionIntensity":0.7,"motionCue":"look_away","voiceStyle":"soft"}
+{"type":"narration","turnId":"...","text":"しずくは一瞬言葉を止め、視線を横へ逃がした。"}
+{"type":"speech_delta","turnId":"...","text":"……急に"}
+{"type":"speech_delta","turnId":"...","text":"そういうこと言うんですね。"}
+{"type":"turn_complete","turnId":"...","turn":{...canonical ModelTurn...}}
 ```
 
-### 5.4 保存境界
+### 5.4 TurnDraft — volatile only
 
-**保存対象は `turn_complete` のcanonical responseのみ。**
+**streaming previewはAppStateへ入れない。絶対にlocalStorageへ永続化しない。**
 
-途中eventはUIのpreviewには使えるがsaveへ確定しない。
+```ts
+export interface TurnDraft {
+  turnId: string;
+  narration?: string;
+  speech: string;
+  performance?: Partial<ModelPerformanceIntent>;
+}
+```
 
-### 5.5 parse failure
+Clientは概念的に次を持つ。
+
+```ts
+const [turnDraft, setTurnDraft] = useState<TurnDraft | null>(null);
+```
+
+途中eventは `patchTurnDraft()` でUI previewのみ更新する。
+
+禁止:
+
+```text
+speech_delta → AppState.messages更新
+narration preview → AppState更新
+performance preview → AppState更新
+```
+
+### 5.5 Canonical transaction boundary
+
+**`turn_complete` のvalidation PASSだけが副作用を起こせる。**
+
+```text
+turn_complete
+  ↓ validate canonical ModelTurn
+ConversationTransaction
+  ├ commitModelMessage
+  ├ commitMemory
+  ├ gainAffection
+  └ mark TTS eligible
+  ↓
+persistent AppState / localStorage
+```
+
+実装APIは概念的に以下へ分離する。
+
+```ts
+patchTurnDraft(draftPatch)     // volatile / preview only
+commitModelTurn(modelTurn)     // persistent / turn_complete only
+```
+
+`patchLastModel()` を新stream protocolの主要APIとして使わない。CURRENTの永続message更新へ引っ張られるため、legacy compatibility用途に限定する。
+
+### 5.6 save invariant
+
+以下を必須不変条件とする。
+
+```text
+turn_completeなし
+→ model message永続化 0
+→ memory commit 0
+→ affection加算 0
+→ TTS eligibility 0
+```
+
+Safari kill / reload / background kill / stream切断時もpartial model messageを残さない。
+
+### 5.7 retry / fallback
 
 禁止:
 
@@ -212,11 +265,13 @@ fallback:
 2. legacy plain-text adapterへretry
 3. 通常のエラーメッセージ
 
-既存 `splitExpression()` / `splitMemory()` はlegacy adapter専用として残す。
+retryが発生してもConversationTransactionは1回だけcommit可能にする。
 
-### 5.6 memory
+既存 `splitExpression()` / `splitMemory()` はlegacy adapter専用。
 
-新protocolでは `[memory: ...]` を廃止し、canonical responseのfieldへ移す。
+### 5.8 memory
+
+新protocolでは `[memory: ...]` を廃止し、canonical responseへ持つ。
 
 ```ts
 memory?: string | null
@@ -224,31 +279,52 @@ memory?: string | null
 
 ---
 
-## 6. Store更新
+## 6. turn identity / stale response protection
 
-CURRENTの `replaceLastModel(text)` だけでは複数fieldのstream更新に弱い。
+Clientは各生成に一意な `turnId` と `AbortController` を持つ。
 
-実装時は1メッセージ単位のatomic patchへ変更する。
-
-```ts
-patchLastModel({
-  text,
-  narration,
-  performance,
-})
+```text
+activeTurnId
+activeAbortController
 ```
 
-旧APIはcompatibility wrapperとして残してもよい。
+受信eventについて:
+
+```text
+event.turnId !== activeTurnId
+→ discard
+```
+
+persona切替 / route変更 / 新しいgeneration開始時は1セットで行う。
+
+```text
+abort generation
+abort TTS
+clear TurnDraft
+invalidate activeTurnId
+```
+
+旧personaの遅延 `turn_complete` が新persona stateへcommitされることを禁止する。
 
 ---
 
-# Part B. PerformanceController
+## 7. affection更新
 
-## 7. 演技責務の分離 — P0修正
+CURRENTのような「stream終了後に単純加算」はやめる。
 
-LLMは「何を感じ、どう演じるか」の意味だけを返す。
+`gainAffection(1)` は **ConversationTransactionの中で、canonical `turn_complete` validation PASS時だけ**実行する。
 
-LLMが返してよい例:
+structured retry / legacy retry / abortで二重加算しない。
+
+1 turnにつき `affection +1以下` を不変条件とする。
+
+---
+
+# Part C. PerformanceController
+
+## 8. 演技責務の分離
+
+LLMが返してよいもの:
 
 ```text
 expression = shy
@@ -257,7 +333,7 @@ voiceStyle = soft
 emotionIntensity = 0.7
 ```
 
-LLMに返させてはいけないもの:
+LLMに返させないもの:
 
 - VRMA ID
 - bone角度
@@ -266,53 +342,43 @@ LLMに返させてはいけないもの:
 - AudioContext状態
 - 再生時刻
 
-### 7.1 Architecture
-
 ```text
 ModelTurn.performance
         ↓
 PerformanceController
- ├─ ExpressionController
- ├─ Gaze/PoseController
- ├─ MotionController
- └─ VoiceController
+ ├ ExpressionController
+ ├ Gaze/PoseController
+ ├ MotionController
+ └ VoiceController
         ↓
 VrmModel / AudioSessionController
 ```
-
-### 7.2 bone ownership / priority
-
-CURRENTのVRMA、shy pose、将来のlook_away/head_tiltが同じboneへ同時書き込みしないよう、PerformanceControllerがownershipを管理する。
 
 推奨priority:
 
 ```text
 1. VRMA base motion
-2. semantic pose overlay (shy/look_away/head_tilt)
+2. semantic pose overlay
 3. gaze/eyes overlay
 4. expression morph
 5. lip sync morph
 ```
 
-同一boneへ複数overlayを同時適用する場合は、PerformanceController内で合成し、VrmModel外から直接boneを書き換えない。
+同一boneへ複数overlayを無秩序に直接書き込まない。
 
-Phase 1〜3では `motionCue` を保存しても実行せず、PerformanceController完成後に有効化する。
+Phase 1〜3では `motionCue` を保存しても実行しない。
 
 ---
 
-# Part C. Voice Architecture
+# Part D. Voice Architecture
 
-## 8. Provider方針
+## 9. Provider方針
 
-第一候補: **Aivis Cloud**
-
-キャラ別候補: **COEIROINK / つくよみちゃん**
-
+第一候補: **Aivis Cloud**  
+キャラ別候補: **COEIROINK / つくよみちゃん**  
 品質比較候補: **ElevenLabs**
 
-Browser SpeechSynthesisはproduction fallbackに自動使用しない。
-
-### 8.1 Provider abstraction
+Browser SpeechSynthesisはproduction自動fallbackにしない。
 
 ```ts
 export interface TtsRequest {
@@ -320,10 +386,6 @@ export interface TtsRequest {
   text: string;
   style?: VoiceStyleId;
   emotionIntensity?: number;
-}
-
-export interface TtsProvider {
-  synthesize(request: TtsRequest): Promise<TtsResult>;
 }
 ```
 
@@ -338,11 +400,33 @@ ProviderAdapter
  └ ElevenLabs (optional)
 ```
 
+### 9.1 TTS開始境界
+
+**Phase 1〜6では、TTS input sourceは `turn_complete.ModelTurn.speech` のみ。**
+
+禁止:
+
+```text
+speech_delta → TTS
+TurnDraft.speech → TTS
+preview narration → TTS
+```
+
+transaction境界を揃える。
+
+```text
+turn_complete
+ ├ save
+ ├ memory commit
+ ├ affection update
+ └ TTS eligible
+```
+
+Phase 7で文単位先読みを導入する場合のみ、別途speculative audio protocolを設計する。
+
 ---
 
-## 9. Voice Registry
-
-booleanだけのlicense表現は禁止。最低限以下を持つ。
+## 10. Voice Registry
 
 ```ts
 export interface VoiceProfile {
@@ -369,9 +453,7 @@ export interface VoiceProfile {
 }
 ```
 
-provider障害時も、**事前承認済みfallback voiceのみ**使用する。
-
-推奨fallback順:
+fallback順:
 
 ```text
 primary voice
@@ -380,11 +462,9 @@ primary voice
 → text-only
 ```
 
-Browser SpeechSynthesisはユーザーが明示的にONにした「簡易音声モード」に限定する。
-
 ---
 
-## 10. Privacy境界
+## 11. Privacy境界
 
 **TTS Providerへ送信可能なのは `ModelTurn.speech` のみ。**
 
@@ -397,9 +477,7 @@ Browser SpeechSynthesisはユーザーが明示的にONにした「簡易音声�
 - persona prompt全文
 - recentPerformance
 
-自アプリ側の通常logへTTS本文を残さない。
-
-logは原則:
+通常logへTTS本文を残さない。
 
 ```text
 requestId
@@ -410,33 +488,13 @@ latencyMs
 status
 ```
 
-のみ。
-
----
-
-## 11. TTS text normalization
-
 表示speechとTTS入力の間に `ttsTextNormalizer` を置く。
 
-用途:
-
-- emoji除去/読み替え
-- URL読み上げ抑制
-- 記号の過剰読み防止
-- 人名等の読み補正
-- 不自然な連続記号の正規化
-
-表示文字列そのものは改変しない。
-
 ---
 
-# Part D. AudioSessionController
+# Part E. AudioSessionController
 
-## 12. iPhone PWA音声 — P0修正
-
-Audio再生をChatPageへ直接書かず、独立Controllerで管理する。
-
-### 12.1 audio state
+## 12. state
 
 ```ts
 type AudioState =
@@ -447,11 +505,7 @@ type AudioState =
   | "paused"
   | "interrupted"
   | "error";
-```
 
-### 12.2 generation stateは別管理
-
-```ts
 type GenerationState =
   | "idle"
   | "requesting"
@@ -462,94 +516,48 @@ type GenerationState =
 
 `generationState` と `audioState` は直交させる。
 
-将来、次文を生成中に前文を読み上げる場合でも表現できる。
+初回「音声ON」または再生ボタンの明示的user gestureでunlockする。`audio.play()` Promise rejectionを必ず処理する。
 
-### 12.3 unlock
-
-初回「音声ON」または再生ボタンの明示的user gestureでaudioをunlockする。
-
-`audio.play()` のPromise rejectionを必ず処理する。
-
-### 12.4 lifecycle
-
-AudioSessionControllerは以下を監視する。
+監視対象:
 
 - `visibilitychange`
 - `pageshow`
 - `pagehide`
-- audio `playing`
-- audio `pause`
-- audio `ended`
-- audio `error`
+- `playing`
+- `pause`
+- `ended`
+- `error`
 - persona切替
 - route変更
 - 新しい発話開始
 
-backgroundでは無理に喋り続けない。
+backgroundでは無理に再生継続しない。foreground復帰時も勝手に途中再開しない。
 
-foreground復帰時も勝手に途中再生せず、原則停止状態へ戻し、必要ならユーザー操作で再生。
-
-### 12.5 streaming transport
-
-`fetch().body` を直接 `<audio>` へ渡す前提にしない。
-
-PoCでAivis公式streaming方式をiPhone standalone PWAで実証し、次のいずれかを選定する。
-
-- MediaSource対応方式
-- progressive playable response URL
-- Blob完成後再生
-- Web Audio decode/playback
-
-本番方式はPoC結果で確定する。
+`fetch().body` をそのまま `<audio>` へ渡す前提にせず、PoCでtransportを選定する。
 
 ---
 
-# Part E. Lip Sync
+# Part F. Lip Sync
 
 ## 13. 原則
-
-CURRENTの
-
-```text
-busy = talking
-```
-
-による周期的 `aa` 口パクは廃止する。
-
-新原則:
 
 ```text
 thinking/requesting/streaming中 → 口を動かさない
 actual audio playing中 → lip sync
 ```
 
-### 13.1 Phase 1
+段階導入:
 
-まずはaudio stateだけで簡易open/close。
+1. audio stateだけで簡易open/close
+2. `AnalyserNode` RMSで音量連動
 
-### 13.2 Phase 2
-
-`AnalyserNode` のRMSで音量連動。
-
-```text
-voice audio
-→ Web Audio AnalyserNode
-→ RMS amplitude
-→ smoothed mouth open
-→ VRM aa
-```
-
-Web Audio不具合がある実機ではlip syncをOFFにし、**音声再生を優先**する。
-
-### 13.3 禁止
+Web Audio不具合がある実機ではlip syncをOFFにし、音声再生を優先する。
 
 `lipSync` をLLM metadataへ含めない。
 
-lip syncは音声波形という実測値から決める。
-
 ---
 
-# Part F. UI
+# Part G. UI / Cache
 
 ## 14. 表示
 
@@ -563,86 +571,51 @@ lip syncは音声波形という実測値から決める。
                          🔊
 ```
 
-narration:
+TurnDraftはpreview表示に使ってよいが、リロード後に残らない。
 
-- speechより小さい文字
-- 半透明
-- キャラ名ラベルなし
-- 最大2文
-- TTS対象外
+canonical `turn_complete` 後にのみ履歴messageとして確定表示する設計でもよい。PoCでUXを比較する。
 
-speech:
+session内では同じmodel messageの再生Blobをmemory cacheし、再再生で再課金しない。
 
-- CURRENT bubbleを継続
-- 各model messageに再生ボタン
-
-設定:
-
-- 音声ON/OFF
-- 自動再生ON/OFF
-- 簡易音声モード（optional）
+個人会話speechをCDNへ永続cacheしない。固定idle lineのみ事前生成/cache可。
 
 ---
 
-# Part G. Cache / Cost
+# Part H. Phase 0 Technical PoC Gate
 
-## 15. Cache方針
+## 15. PoC 1 — Gemini structured stream / transaction integrity
 
-個人会話speechをCDNへ永続cacheしない。
-
-session内では同じmodel messageの再生用Blobをmemory cacheし、再生ボタンを押すたびに再課金しない。
-
-永続cache可:
-
-- 定型idle line
-- 固定system voice sample
-
-永続cache不可:
-
-- 個人会話speech
-- memoryに依存するセリフ
-
----
-
-# Part H. Voice Casting
-
-## 16. 基本方針
-
-最初から5人×複数providerを本番運用しない。
+実証対象:
 
 ```text
-5キャラ
-  ↓ 原則
-Aivis Cloud
-  ↓ 特定キャラだけA/B評価で明確に優れる場合
-COEIROINK等
-  ↓ 障害時
-approved fallback or text-only
+Gemini structured stream
+→ server-owned events
+→ TurnDraft
+→ turn_complete
+→ ConversationTransaction
 ```
 
-### 16.1 つくよみちゃん
+強制試験:
 
-採用候補として残す。
+- stream途中でreload
+- stream途中で通信切断
+- AbortControllerでabort
+- persona切替
+- route変更
+- structured parse failure
+- structured retry
+- legacy fallback
 
-採用時はライセンスレビュー結果をVoice Registryへ記録し、creditsから
+PASS条件:
 
-```text
-しずく — Voice: COEIROINK:つくよみちゃん
-```
+- localStorageにpartial model message 0
+- `turn_complete` なしのmemory commit 0
+- `turn_complete` なしのaffection加算 0
+- stale turn commit 0
+- raw JSON露出 0
+- retryによる二重commit 0
 
-のように確認可能にする。
-
-音声素材そのものの再配布はしない。
-
----
-
-# Part I. PoC Gate
-
-## 17. Phase 0 — 実装前Technical PoC
-
-以下3つがPASSするまで本実装へ進まない。
-
-### PoC 1: iPhone standalone PWA × Aivis
+## 16. PoC 2 — iPhone standalone PWA × Aivis
 
 対象: しずく1人
 
@@ -661,40 +634,37 @@ approved fallback or text-only
 - TTS生成失敗
 - play() rejection
 
-PASS条件:
-
-- 勝手な再開なし
-- 二重再生なし
-- persona切替後の旧音声残留なし
-- 復帰不能なし
-
-### PoC 2: Gemini structured streaming
-
-100ターン程度生成。
-
-schema:
+計測:
 
 ```text
-narration
-speech
-expression
-emotionIntensity
-motionCue
-voiceStyle
-pause
-memory
+tap → audible first audio
+p50
+p95
 ```
 
-Acceptance:
+PoC後にproduction目標値を固定する。初期目安:
 
-- raw JSON露出 0
-- narration誤読み上げ 0
-- memory表示 0
-- invalid expression 0
-- interrupted streamで履歴破壊 0
-- turn_completeなしのpartial save 0
+```text
+p50 < 1.2s
+p95 < 2.5s
+```
 
-### PoC 3: Voice casting / latency / cost
+ただし採否は実測結果とUXを見て最終決定する。
+
+## 17. PoC 3 — transaction side-effect invariant
+
+1 turnにつき必ず:
+
+```text
+model message: 0 or 1
+memory: 0 or 1
+affection: +0 or +1
+TTS: 0 or 1
+```
+
+retry / abort / persona切替 / route変更で二重副作用が発生しないこと。
+
+## 18. PoC 4 — Voice casting / latency / cost
 
 同じ20セリフで比較。
 
@@ -714,23 +684,30 @@ Acceptance:
 
 ---
 
-# Part J. Implementation Phases
+# Part I. Implementation Phases
 
-## Phase 1 — Canonical Dialogue Contract
+## Phase 1 — Canonical Dialogue Contract / Transaction
 
+- `protocolVersion: 1`
 - `ModelTurn`
 - `ModelPerformanceIntent`
+- `TurnDraft`（volatile only）
+- `patchTurnDraft()`
+- `commitModelTurn()`
+- `ConversationTransaction`
+- `turnId`
+- `AbortController`
+- stale event discard
 - memory field化
 - legacy adapter
 - save互換
-- `patchLastModel()`
 
 音声なし。
 
 ## Phase 2 — Emotion UI
 
 - narration + speech分離表示
-- narration保存
+- canonical narration保存
 - recentPerformance直近2ターン
 - CURRENT expression動作維持
 - motionCueは保存のみ、実行しない
@@ -740,6 +717,7 @@ Acceptance:
 - しずく1人
 - Aivis
 - 手動再生
+- `turn_complete.speech` のみTTS eligible
 - AudioSessionController
 - Voice Registry
 - privacy logging
@@ -758,7 +736,7 @@ Acceptance:
 - busy口パク削除
 - playing連動
 - RMS lip sync
-- unsupported/failure時lip sync OFF fallback
+- failure時lip sync OFF fallback
 
 ## Phase 6 — PerformanceController
 
@@ -772,47 +750,55 @@ Acceptance:
 ## Phase 7 — Advanced Sync（必要時のみ）
 
 - 文単位TTS先読み
+- speculative audio protocol
 - viseme/phoneme
 - speech-motion同期
 
 ---
 
-# Part K. Acceptance Criteria
+# Part J. Acceptance Criteria
 
-## 18. 会話
+## 19. Conversation / Persistence
 
 - narrationとspeechが明確に分離
-- narrationなしターンを自然に生成できる
-- narrationが通常50文字以内
-- speechのみ既存conversation historyへ入る
+- narrationなしターンを自然に生成
+- narration通常50文字以内
+- speechのみ通常conversation historyへ入る
 - raw structured outputがUIへ露出しない
 - memoryがユーザーへ表示されない
+- TurnDraftは永続化されない
+- `turn_complete` なしのpartial save 0
+- stale turn commit 0
+- retryで二重commit 0
+- 1 canonical turnにつきaffection加算は最大1回
 
-## 19. 音声
+## 20. TTS
 
+- TTS対象はcanonical `turn_complete.ModelTurn.speech` のみ
 - narrationを絶対に読み上げない
-- user message/memory/system promptをTTS providerへ送らない
-- キャラごとの声が固定
-- fallback voiceは事前承認済みのみ
+- user message/memory/system promptをproviderへ送らない
+- speech_deltaからTTS開始しない
+- approved fallbackのみ使用
 - provider障害時にtext-onlyへ安全に落ちる
 
-## 20. iPhone PWA
+## 21. iPhone PWA
 
 - user gesture後に安定再生
 - background/foregroundで二重再生・勝手な再開なし
-- persona/route変更で旧音声停止
+- persona/route変更で旧generationと旧音声停止
 - play() reject時にUIが壊れない
+- first-audio latency p50/p95を記録
 
-## 21. VRM
+## 22. VRM
 
 - thinking中に口パクしない
 - audio playing中のみlip sync
-- lip sync failureでも音声は継続
+- lip sync failureでも音声継続
 - VRMA / shy / gaze / motionCueが同一boneへ無秩序に競合しない
 
 ---
 
-# Part L. Non-goals
+# Part K. Non-goals
 
 初期実装では行わない。
 
@@ -822,34 +808,38 @@ Acceptance:
 - narration音声化
 - user voice cloning
 - 長期音声ファイル永続保存
+- Phase 7以前のspeculative TTS
 
 ---
 
-## 22. 最終設計判断
+## 23. 最終設計判断
 
-レビュー判定は **APPROVE WITH CHANGES**。
+第2回SOLレビューのNEW P0である「partial turn保存」を以下で解消する。
 
-以下は維持する。
+```text
+Server events
+   ↓
+TurnDraft (volatile / NEVER persisted)
+   ↓ UI preview
+turn_complete
+   ↓ validation
+ConversationTransaction
+ ├ commitModelMessage
+ ├ commitMemory
+ ├ gainAffection
+ └ mark TTS eligible
+   ↓
+persistent AppState
+```
 
-- narration / speech / hidden performance intent の3層分離
-- `ChatMessage.text = speech`
-- narration非TTS
-- provider abstraction
-- thinking ≠ speaking
+加えて以下を正式採用する。
 
-以下はレビューを受けて変更した。
+- `turnId` / `AbortController` / stale response discard
+- TTS開始境界を `turn_complete.speech` に固定
+- affection更新をcanonical transactionへ統合
+- `protocolVersion: 1`
+- first-audio latency p50/p95計測
 
-- Gemini → NDJSON ではなく **Gemini structured JSON → server-owned events**
-- `turn_complete` canonical responseのみ保存
-- memoryをstructured fieldへ移行
-- `PerformanceController`追加
-- `AudioSessionController`追加
-- generation/audio stateを分離
-- lipSyncをLLM metadataから削除
-- narration通常上限を50文字へ短縮
-- recentPerformance直近2ターン追加
-- Voice Registryライセンス情報を詳細化
-- Browser SpeechSynthesisの自動fallbackを禁止
-- TTS privacy境界を `speech only` と明文化
+これにより、設計上の既知P0は解消済みとみなす。
 
 **次の作業は Phase 0 Technical PoC。PoC PASS前に本実装へ進まない。**
