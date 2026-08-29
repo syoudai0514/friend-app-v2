@@ -1,184 +1,61 @@
 # friend-app-v2 情緒表現・自然音声アーキテクチャ設計
 
-Status: **DESIGN / REVIEW REQUESTED**  
+Status: **REVIEWED / APPROVE WITH CHANGES 反映済み**  
 Target repository: `syoudai0514/friend-app-v2`  
 Reviewed against current `main`: 2026-08-30  
-Scope: **設計のみ。実装・本番反映はこの文書のレビュー後。**
+Scope: **設計のみ。実装は本設計のPoC条件を満たしてから開始する。**
 
 ---
 
-## 1. 背景と目的
+## 1. 目的
 
-現在の会話は、LLMの返答をほぼそのまま1つの吹き出しへ表示し、先頭の表情タグだけでVRM表情を変えている。
-この方式は軽量だが、会話が「セリフだけ」に寄りやすく、以下が表現しにくい。
+friend-app-v2 の会話を、単調な「セリフだけのチャット」から、**感情の変化・視線・間・場の空気・実際の発言・自然音声・VRM演技が分離されつつ同期する会話体験**へ発展させる。
 
-- 一瞬の戸惑い、嬉しさ、照れ、ためらいなどの**感情の変化**
-- 視線、姿勢、間、沈黙などの**非言語表現**
-- 場の空気、距離感、雰囲気の変化
-- 実際に口から出した言葉と、地の文・情景描写の明確な分離
-- キャラクターごとの自然な音声
-- 発話内容とVRMの口・表情・モーションの同期
-
-今回の目的は、会話を「テキストチャット」から、**キャラクターがその場で考え、反応し、話しているように感じる会話体験**へ発展させることである。
+今回の設計で最も重要なのは、LLMが決める「演技の意味」と、実機ランタイムが決める「具体的な再生方法」を分離することである。
 
 ---
 
-## 2. CURRENT実装で確認した事実
+## 2. CURRENT実装との接続点
 
-### 2.1 会話出力
+CURRENTでは以下を確認済み。
 
-`src/lib/prompt.ts` は現在、LLMに以下を要求している。
+- `src/lib/prompt.ts`: `[expression] speech [memory: ...]` の文字列protocol
+- `src/app/chat/page.tsx`: Geminiのtext streamを受信し、expression/memoryタグを剥がして `replaceLastModel(text)`
+- `src/lib/types.ts`: `ChatMessage = { role, text, at }`
+- `src/lib/speech.ts`: ユーザー側 SpeechRecognition のみ
+- `VrmModel.tsx`: `talking=true` 中に `aa` を周期的に動かす簡易口パク
+- `VrmModel.tsx`: shy表現でhead/eyesのbone offsetを直接適用
+- VRMAモーションは既に複数導入済み
 
-- 先頭に `[happy]` / `[shy]` 等の表情タグを1つ
-- その後に会話本文
-- 必要な場合のみ末尾に `[memory: ...]`
-
-`src/app/chat/page.tsx` はストリームを受信し、表情タグとmemoryタグを除去して、残った本文をモデル吹き出しへ表示している。
-
-したがって、現在のモデル返答は実質以下の1レイヤーである。
-
-```text
-expression + speech text
-```
-
-### 2.2 保存形式
-
-`ChatMessage` は現在、
-
-```ts
-{
-  role: "user" | "model";
-  text: string;
-  at: number;
-}
-```
-
-のみ。
-
-既存データ互換を壊さないため、今回の設計では `text` を残し、追加情報は optional field とする。
-
-### 2.3 音声
-
-`src/lib/speech.ts` は **音声入力（SpeechRecognition）専用**であり、キャラクターの読み上げ機能はない。
-
-### 2.4 口パク
-
-`VrmModel.tsx` の現在の口パクは、LLMが返答生成中 (`talking=true`) に `aa` blendshape を周期的に動かしている。
-
-つまり現在は、
-
-```text
-「返答を考えている時間」 = 口を動かす時間
-```
-
-であり、将来TTSを導入した場合には、
-
-```text
-「音声再生中」 = 口を動かす時間
-```
-
-へ変更する必要がある。
+したがって、既存互換を壊さず、会話・演技・音声を段階的に分離する。
 
 ---
 
-# Part A. 情緒・雰囲気・実発言の分離
+# Part A. Canonical Dialogue Contract
 
-## 3. 表現モデル
+## 3. 3層分離
 
-1回のキャラクター返答を、以下の3レイヤーへ分離する。
+1回のモデル返答を以下に分ける。
 
-### Layer 1: Scene / Narration
+### 3.1 narration
 
-ユーザーに見せる「地の文」。
+ユーザーに見せる地の文。外から観察できる感情変化・視線・仕草・間・雰囲気を短く表す。
 
 例:
-
-> しずくは一瞬目を丸くした。頬が少し赤くなり、視線を横へ逃がす。
-
-役割:
-
-- 表情の変化
-- 視線
-- 仕草
-- 沈黙・間
-- 距離感
-- 場の雰囲気
-
-### Layer 2: Spoken Dialogue
-
-キャラクターが**実際に発声した言葉**。
-
-例:
-
-> 「……急にそういうこと言うんですね。ふふ、でも嬉しいです」
-
-TTSで読むのは原則この部分だけ。
-
-### Layer 3: Hidden Performance Metadata
-
-UIには直接表示しない制御情報。
-
-例:
-
-```json
-{
-  "expression": "shy",
-  "emotionIntensity": 0.72,
-  "motionCue": "look_away",
-  "voiceStyle": "soft_shy"
-}
-```
-
-これをVRM表情・将来のモーション・声質へ連動させる。
-
----
-
-## 4. 「説明しすぎない」ことを重要ルールとする
-
-リアルさを出すため、ナレーションはキャラの心を全部説明しない。
-
-悪い例:
-
-> しずくはあなたが大好きなので、嬉しさと恥ずかしさを感じた。
-
-良い例:
 
 > しずくは一瞬言葉を止め、頬を少し赤くして視線をそらした。
 
-理由:
+### 3.2 speech
 
-- 感情を明示しすぎると小説の解説文になる
-- 人間同士の会話は、視線・間・声色から感情を推測する
-- ユーザーに「読み取る余地」を残した方がキャラクターを生きているように感じやすい
+キャラクターが実際に口にする言葉。**TTS対象はこのspeechのみ。**
 
-設計原則は **show, don't explain** とする。
+例:
 
----
+> ……急にそういうこと言うんですね。ふふ、でも嬉しいです。
 
-## 5. 毎ターン必ずナレーションを出さない
+### 3.3 hidden performance intent
 
-ナレーションを毎回出すと、逆に単調になる。
-
-推奨:
-
-- 普通の短い返答: narrationなしでもよい
-- 感情変化がある: 1文
-- 大きな感情変化・重要な会話: 最大2文
-
-目安:
-
-```text
-narration: 0〜80文字
-speech: 1〜4文、概ね20〜180文字
-```
-
-「何も起きない」という選択肢を持たせる。
-
----
-
-## 6. 新しい会話レスポンス契約
-
-### 推奨データ型
+UIへ直接表示しない意味レベルの演技情報。
 
 ```ts
 export type EmotionId =
@@ -199,175 +76,243 @@ export type VoiceStyleId =
   | "serious"
   | "excited";
 
-export interface ModelPerformance {
-  narration?: string;
-  speech: string;
+export type MotionCue =
+  | "none"
+  | "look_away"
+  | "small_nod"
+  | "head_tilt"
+  | "lean_in";
+
+export type PauseCue = "none" | "short" | "medium";
+
+export interface ModelPerformanceIntent {
+  version: 1;
   expression: EmotionId;
-  emotionIntensity?: number; // 0.0 - 1.0
-  motionCue?: string;
+  emotionIntensity?: number; // 0..1
+  motionCue?: MotionCue;
   voiceStyle?: VoiceStyleId;
+  pause?: PauseCue;
 }
 
+export interface ModelTurn {
+  narration?: string;
+  speech: string;
+  memory?: string | null;
+  performance: ModelPerformanceIntent;
+}
+```
+
+### 3.4 保存形式
+
+既存互換のため `ChatMessage.text` は維持する。
+
+```ts
 export interface ChatMessage {
   role: "user" | "model";
   text: string;
   at: number;
-  performance?: ModelPerformance;
+  narration?: string;
+  performance?: ModelPerformanceIntent;
 }
 ```
 
-### backward compatibility
-
-`text` は引き続き残す。
-
-モデル返答の場合:
+モデル返答では必ず:
 
 ```text
-text = performance.speech
+ChatMessage.text = ModelTurn.speech
 ```
 
 とする。
 
-これにより:
-
-- 既存save dataはそのまま読める
-- 新fieldを知らない旧コードでもspeechは表示できる
-- v1互換を極力崩さない
+これにより旧saveはそのまま読み、新saveも旧コードでspeechだけは表示できる。
 
 ---
 
-## 7. LLM出力プロトコル
+## 4. narration設計
 
-### 結論
+### 4.1 原則
 
-**ユーザー表示用のタグ文字列を直接ストリームする現方式から、構造化イベント方式へ移行する。**
-
-推奨方式は NDJSON または SSE。
-
-LLM内部出力例:
-
-```jsonl
-{"type":"state","expression":"shy","intensity":0.72,"motionCue":"look_away","voiceStyle":"shy"}
-{"type":"narration","text":"しずくは一瞬目を丸くし、頬を少し赤くして視線をそらした。"}
-{"type":"speech","text":"……急にそういうこと言うんですね。ふふ、でも嬉しいです。"}
-{"type":"memory","text":"ユーザーはしずくと手をつなぎたい"}
-```
-
-サーバーは1行単位で検証してクライアントへイベント化する。
-
-### なぜ単純JSON 1個ではなくイベント方式か
-
-単一JSONは堅牢だが、全生成完了まで表示開始できない。
-
-イベント方式なら:
-
-1. 表情を先に変更
-2. narration表示
-3. speech表示
-4. 完成したspeechでTTS開始
-
-という自然な順序にできる。
-
-### フォールバック
-
-構造化出力に失敗した場合:
-
-```text
-speech = 従来の本文
-expression = normal
-narration = undefined
-```
-
-として会話自体は止めない。
-
----
-
-## 8. Prompt方針
-
-従来の
-
-```text
-[expression] 本文 [memory]
-```
-
-指定を廃止し、以下を明示する。
-
-### narration生成ルール
-
-- キャラ本人の外から観察できる動作を優先
-- 心情の直接説明は最小限
-- 同じ「頬を赤らめる」「視線をそらす」を連続使用しない
+- **default = none**
+- 通常: 0〜50文字 / 最大1文
+- 重要ターンのみ: 最大80文字 / 最大2文
+- show, don't explain
+- 心情の直接説明を避ける
 - ユーザーの行動を勝手に確定しない
-- 現実にキャラクターが実行できない動作を過度に描写しない
-- narrationなしも許可
+- 同じ「頬を赤らめる」「視線をそらす」を連打しない
+- narrationをspeechで言い直さない
 
-### speech生成ルール
+### 4.2 recentPerformance
 
-- Personaの口調を最優先
-- narrationの内容をもう一度セリフで説明しない
-- 人間らしい言い直し、短い間、ためらいは許可
-- 毎回質問で終わらせない
-- 同じ定型句を連打しない
+`ChatMessage.text = speech` を維持するため、Gemini通常historyにはnarrationを混ぜない。
 
----
+ただし反復防止のため、直近2ターンだけ別入力として渡す。
 
-## 9. UI設計
-
-モデル返答は以下の順に表示する。
-
-```text
-[小さな地の文カード]
-しずくは一瞬目を丸くし、頬を少し赤くして視線をそらした。
-
-しずく
-[通常の会話吹き出し]
-……急にそういうこと言うんですね。ふふ、でも嬉しいです。
+```ts
+recentPerformance: Array<{
+  narration?: string;
+  expression?: EmotionId;
+  motionCue?: MotionCue;
+}>
 ```
 
-### narration UI
+---
 
-- 文字サイズ: speechより小さめ
-- 半透明
-- italic相当または弱い色
-- キャラ名ラベルは付けない
-- 長くても2文
+## 5. Gemini出力protocol — P0修正
 
-### speech UI
+### 5.1 禁止
 
-現在のmodel bubbleを継続利用。
+**Gemini自身にNDJSON/SSEイベントを書かせない。**
 
-### 音声ボタン
+Geminiのstream chunkは独立JSONイベントではなく、最終JSONを構成するpartial JSON stringであるため、モデル出力をそのまま1行JSONイベントとして扱う設計は採用しない。
 
-model bubbleごとに小さな再生ボタンを設ける。
+### 5.2 正式構成
 
 ```text
-🔊 再生 / ⏸ 停止
+Gemini
+  ↓ schema-enforced structured JSON stream
+Server DialogueProtocol
+  ↓ incremental parser / validation
+Server-owned app events (NDJSON or SSE)
+  ↓
+Browser
 ```
 
-設定で「返答を自動再生」をON/OFFできるようにする。
+GeminiにはJSON Schemaで `ModelTurn` を強制する。
+
+### 5.3 server-owned events
+
+ブラウザへはサーバーが独自eventへ変換して送る。
+
+例:
+
+```json
+{"type":"performance","expression":"shy","emotionIntensity":0.7,"motionCue":"look_away","voiceStyle":"soft"}
+{"type":"narration","text":"しずくは一瞬言葉を止め、視線を横へ逃がした。"}
+{"type":"speech_delta","text":"……急に"}
+{"type":"speech_delta","text":"そういうこと言うんですね。"}
+{"type":"turn_complete","turn":{...canonical ModelTurn...}}
+```
+
+### 5.4 保存境界
+
+**保存対象は `turn_complete` のcanonical responseのみ。**
+
+途中eventはUIのpreviewには使えるがsaveへ確定しない。
+
+### 5.5 parse failure
+
+禁止:
+
+- raw JSON断片をspeechとして表示
+- raw JSON断片をTTS
+
+fallback:
+
+1. structured outputを1回retry
+2. legacy plain-text adapterへretry
+3. 通常のエラーメッセージ
+
+既存 `splitExpression()` / `splitMemory()` はlegacy adapter専用として残す。
+
+### 5.6 memory
+
+新protocolでは `[memory: ...]` を廃止し、canonical responseのfieldへ移す。
+
+```ts
+memory?: string | null
+```
 
 ---
 
-# Part B. キャラクター自然音声
+## 6. Store更新
 
-## 10. 要件
+CURRENTの `replaceLastModel(text)` だけでは複数fieldのstream更新に弱い。
 
-- 5キャラそれぞれ違う声
-- 機械音感をなるべく避ける
-- 日本語の自然さを最重視
-- Personaの性格に合わせた声質
-- 感情によって話速・強さを多少変更
-- narrationは読まず、speechのみ発声
-- iPhone PWAで動作
-- APIキーはクライアントへ露出しない
-- 将来providerを変更できる
-- ライセンス条件をコード上で管理する
+実装時は1メッセージ単位のatomic patchへ変更する。
+
+```ts
+patchLastModel({
+  text,
+  narration,
+  performance,
+})
+```
+
+旧APIはcompatibility wrapperとして残してもよい。
 
 ---
 
-## 11. Provider抽象化を最初から行う
+# Part B. PerformanceController
 
-直接AivisやCOEIROINK専用コードをChatPageへ書かない。
+## 7. 演技責務の分離 — P0修正
+
+LLMは「何を感じ、どう演じるか」の意味だけを返す。
+
+LLMが返してよい例:
+
+```text
+expression = shy
+motionCue = look_away
+voiceStyle = soft
+emotionIntensity = 0.7
+```
+
+LLMに返させてはいけないもの:
+
+- VRMA ID
+- bone角度
+- blendshape値
+- lipSync値
+- AudioContext状態
+- 再生時刻
+
+### 7.1 Architecture
+
+```text
+ModelTurn.performance
+        ↓
+PerformanceController
+ ├─ ExpressionController
+ ├─ Gaze/PoseController
+ ├─ MotionController
+ └─ VoiceController
+        ↓
+VrmModel / AudioSessionController
+```
+
+### 7.2 bone ownership / priority
+
+CURRENTのVRMA、shy pose、将来のlook_away/head_tiltが同じboneへ同時書き込みしないよう、PerformanceControllerがownershipを管理する。
+
+推奨priority:
+
+```text
+1. VRMA base motion
+2. semantic pose overlay (shy/look_away/head_tilt)
+3. gaze/eyes overlay
+4. expression morph
+5. lip sync morph
+```
+
+同一boneへ複数overlayを同時適用する場合は、PerformanceController内で合成し、VrmModel外から直接boneを書き換えない。
+
+Phase 1〜3では `motionCue` を保存しても実行せず、PerformanceController完成後に有効化する。
+
+---
+
+# Part C. Voice Architecture
+
+## 8. Provider方針
+
+第一候補: **Aivis Cloud**
+
+キャラ別候補: **COEIROINK / つくよみちゃん**
+
+品質比較候補: **ElevenLabs**
+
+Browser SpeechSynthesisはproduction fallbackに自動使用しない。
+
+### 8.1 Provider abstraction
 
 ```ts
 export interface TtsRequest {
@@ -382,716 +327,529 @@ export interface TtsProvider {
 }
 ```
 
-サーバー側:
-
 ```text
 /api/tts
-  -> voice registry
-  -> provider adapter
-      -> Aivis Cloud
-      -> COEIROINK gateway
-      -> ElevenLabs
-      -> fallback
+  ↓
+VoiceRegistry
+  ↓
+ProviderAdapter
+ ├ Aivis Cloud
+ ├ COEIROINK gateway
+ └ ElevenLabs (optional)
 ```
 
-これにより、声の比較・差し替えをアプリ本体から分離する。
-
 ---
 
-## 12. Provider候補評価（2026-08-30時点）
+## 9. Voice Registry
 
-### A. Aivis Cloud API — 第一候補
-
-推奨: **Production primary candidate**
-
-理由:
-
-- 日本語特化
-- 自然さ・感情表現を強く意識したTTS
-- Cloud APIあり
-- 低遅延ストリーミングを公式に提供
-- AivisSpeech/AivisHubの複数モデルを利用可能
-- 将来自作モデルへ移行可能
-- VercelサーバーrouteからAPIを呼びやすい
-
-注意:
-
-- 各音声モデルのライセンスは別途確認必須
-- 料金・rate limitを本番トラフィックに合わせて確認
-
-公式情報ではCloud APIはリアルタイム用途を想定し、最速0.3秒で音声生成開始としている。
-
-### B. COEIROINK + つくよみちゃん — 有力な個別キャラ候補
-
-つくよみちゃんは候補として残す。
-
-2026-08-30確認時点で、COEIROINK上のつくよみちゃん音声は:
-
-- 非商用: 可
-- 個人商用: 可
-- 法人商用: 可
-- 別キャラクターへの声当て: 可
-- クレジット: 必須
-
-したがってfriend-app-v2の別キャラへ声を当てること自体は規約上可能。
-
-ただしCOEIROINKはローカルエンジン中心なので、Vercelだけでproduction TTSを完結させる構成には向かない。
-採用する場合は別途常駐TTS gateway/serverが必要。
-
-推奨用途:
-
-- 特定キャラの声が非常に合う場合
-- local/self-host検証
-- Aivisとの音質比較
-
-### C. ElevenLabs — 品質比較用 / second provider
-
-- 日本語TTS APIあり
-- 多言語向け高品質音声
-- API実装が容易
-
-ただし:
-
-- コスト
-- 外部サービス依存
-- voice利用権確認
-- 日本語キャラ演技の好み
-
-を考慮し、第一実装ではなく**品質ベンチマーク**として使う。
-
-### D. VOICEVOX
-
-- 無料
-- API利用しやすい
-- 多数のキャラクター
-
-一方、本要望の「機械音ではなく自然な声」を最優先すると第一候補にはしない。
-fallback / 比較対象とする。
-
-### E. Browser SpeechSynthesis
-
-production voiceには使用しない。
-
-理由:
-
-- iPhone/OSごとに声が変わる
-- キャラごとの声を保証できない
-- 品質・速度の再現性が低い
-
-障害時のfallbackだけを想定。
-
----
-
-## 13. 推奨Voice Casting
-
-特定の音声モデル名を設計段階で固定しない。
-
-5キャラごとに2〜3音声を試聴し、実機でA/B評価する。
-
-### アイミー
-
-- 明るい
-- 若い
-- テンポ速め
-- 感情振幅大
-
-### しずく
-
-- 柔らかい
-- 少し息を含む
-- ゆっくり
-- 安心感
-
-つくよみちゃんはこの系統の候補として試聴価値あり。
-
-### なぎ
-
-- 少し低め
-- クール
-- 感情を抑えた声
-- 照れ時だけ柔らかくなる
-
-### ひなた
-
-- 明るく高め
-- テンポ速め
-- 元気
-
-### れな
-
-- 落ち着いた大人
-- 少し低め
-- ゆっくり
-- 余裕がある
-
----
-
-## 14. Voice Registry
-
-Personaへ直接provider固有IDを埋め込まず、独立registryにする。
+booleanだけのlicense表現は禁止。最低限以下を持つ。
 
 ```ts
 export interface VoiceProfile {
-  personaId: string;
-  provider: "aivis" | "coeiroink" | "elevenlabs" | "browser";
+  voiceProfileId: string;
+  provider: "aivis" | "coeiroink" | "elevenlabs";
   voiceId: string;
   modelId?: string;
+  modelVersion?: string;
   baseSpeed: number;
-  basePitch?: number;
-  credit?: string;
-  commercialAllowed: boolean;
-  otherCharacterAllowed: boolean;
-  reviewedAt: string;
+  basePitch: number;
+  styleMap: Partial<Record<VoiceStyleId, string>>;
+  fallbackVoiceProfileId?: string;
+  license: {
+    url: string;
+    commercialScope: string;
+    otherCharacterUse: string;
+    attributionRequired: boolean;
+    attributionText?: string;
+    contentRestrictions?: string;
+    redistributionRestrictions?: string;
+    reviewedAt: string;
+  };
+  productionApproved: boolean;
 }
 ```
 
-例:
+provider障害時も、**事前承認済みfallback voiceのみ**使用する。
 
-```ts
-const VOICES = {
-  shizuku: {
-    provider: "coeiroink",
-    voiceId: "tsukuyomi-chan",
-    credit: "COEIROINK:つくよみちゃん",
-    commercialAllowed: true,
-    otherCharacterAllowed: true,
-    reviewedAt: "2026-08-30"
-  }
-}
+推奨fallback順:
+
+```text
+primary voice
+→ transient retry 1回
+→ approved secondary voice
+→ text-only
 ```
 
-実際の採用voiceは試聴後に決定する。
+Browser SpeechSynthesisはユーザーが明示的にONにした「簡易音声モード」に限定する。
 
 ---
 
-## 15. ライセンスを実装要件にする
+## 10. Privacy境界
 
-音声を選ぶときは品質だけで決めない。
+**TTS Providerへ送信可能なのは `ModelTurn.speech` のみ。**
 
-各voiceについて最低限以下を記録する。
+送信禁止:
+
+- user message
+- narration
+- memory
+- system prompt
+- persona prompt全文
+- recentPerformance
+
+自アプリ側の通常logへTTS本文を残さない。
+
+logは原則:
 
 ```text
+requestId
 provider
-voice/model name
-license URL
-commercial use
-other-character use
-credit required
-adult-content restrictions
-redistribution restrictions
-reviewed date
+personaId
+characterCount
+latencyMs
+status
 ```
 
-設定画面またはアプリ内「クレジット」に必要な表記を集約する。
-
-特につくよみちゃん/COEIROINK採用時は、ユーザーから確認可能な場所へクレジット表示を設ける。
+のみ。
 
 ---
 
-## 16. TTS API設計
+## 11. TTS text normalization
 
-### Endpoint
+表示speechとTTS入力の間に `ttsTextNormalizer` を置く。
 
-```http
-POST /api/tts
-```
+用途:
 
-Request:
+- emoji除去/読み替え
+- URL読み上げ抑制
+- 記号の過剰読み防止
+- 人名等の読み補正
+- 不自然な連続記号の正規化
 
-```json
-{
-  "personaId": "shizuku",
-  "text": "ふふ、来てくれたんですね。",
-  "style": "soft",
-  "emotionIntensity": 0.5
-}
-```
-
-Response:
-
-```text
-audio/mpeg or audio/wav stream
-```
-
-### セキュリティ
-
-- TTS API keyはserver envのみ
-- クライアントへprovider keyを返さない
-- `personaId` からserver側でvoiceを決定
-- clientから任意voiceIdを指定させない
-- text length上限を設ける
+表示文字列そのものは改変しない。
 
 ---
 
-## 17. 音声生成タイミング
+# Part D. AudioSessionController
 
-### 推奨
+## 12. iPhone PWA音声 — P0修正
 
-1. Geminiがspeech完成
-2. speechを画面表示
-3. auto voice ONなら `/api/tts`
-4. 音声をstream再生
-5. 再生開始時に口パク開始
-6. 再生終了時に口パク停止
+Audio再生をChatPageへ直接書かず、独立Controllerで管理する。
 
-narrationは読み上げない。
-
-### 将来最適化
-
-speechが複数文の場合は、文単位TTS先読みも検討可能。
-
-Phase 1では分割せず、1返答=1TTS requestでよい。
-
----
-
-## 18. Lip Sync設計
-
-現在の
-
-```text
-busy => sin波でaa口パク
-```
-
-は廃止する。
-
-### Phase 1
-
-```text
-audio playing => aaを自然周期で動かす
-```
-
-まず生成中ではなく**実際の再生時間**へ同期するだけでも大きく改善する。
-
-### Phase 2
-
-Web Audio API `AnalyserNode` でRMS音量を取得し、
-
-```text
-aa = clamp(rms * gain)
-```
-
-で口の開きを音量へ同期する。
-
-これにより:
-
-- 無音部分で口を閉じる
-- 大きな発声で口が開く
-- 文末で自然に閉じる
-
-### Phase 3 optional
-
-providerがphoneme/viseme timingを返せる場合だけ、
-
-```text
-aa / ih / ou / ee / oh
-```
-
-の母音lip syncへ拡張。
-
-最初からここまで行わない。
-
----
-
-## 19. emotion -> voice mapping
-
-voiceStyleをLLMが完全自由入力するのではなく、有限集合にする。
-
-例:
+### 12.1 audio state
 
 ```ts
-const DELIVERY = {
-  neutral: { speed: 1.00 },
-  bright:  { speed: 1.06 },
-  excited: { speed: 1.10 },
-  soft:    { speed: 0.94 },
-  shy:     { speed: 0.92 },
-  sad:     { speed: 0.90 },
-  serious: { speed: 0.95 }
-};
-```
-
-providerごとに対応可能なパラメータへ変換する。
-
-LLMにpitch/speedの生数値を直接決めさせない。
-
-理由:
-
-- キャラ声がターンごとに不安定になる
-- 極端値を出す可能性
-- provider交換が難しくなる
-
----
-
-## 20. emotion -> VRM mapping
-
-既存expression 7種は残す。
-
-```text
-normal
-happy
-shy
-sad
-angry
-surprised
-sleepy
-```
-
-追加metadata:
-
-```text
-emotionIntensity: 0..1
-motionCue
-```
-
-### motionCue Phase 1
-
-新規VRMAを大量に作る必要はない。
-
-まず既存モーションを壊さず、ボーン差分で小さく表現できるものだけ採用。
-
-例:
-
-```text
-look_away
-small_nod
-head_tilt
-lean_forward_small
-```
-
-大きな動作は後でVRMA化する。
-
----
-
-## 21. Chat UI状態遷移
-
-現在の `busy` 1個だけでは足りない。
-
-推奨:
-
-```ts
-type ConversationPhase =
+type AudioState =
+  | "locked"
   | "idle"
-  | "thinking"
-  | "receiving"
-  | "tts-loading"
-  | "speaking";
+  | "loading"
+  | "playing"
+  | "paused"
+  | "interrupted"
+  | "error";
 ```
 
-### VRM挙動
+### 12.2 generation stateは別管理
 
-```text
-thinking     -> 口を動かさない
-receiving    -> 表情だけ先に変化してよい
-tts-loading  -> 小さな待機表情
-speaking     -> lip sync ON
-idle         -> 通常idle
+```ts
+type GenerationState =
+  | "idle"
+  | "requesting"
+  | "streaming"
+  | "complete"
+  | "error";
 ```
 
-これだけでも「考えているのに口がパクパクする」違和感が消える。
+`generationState` と `audioState` は直交させる。
+
+将来、次文を生成中に前文を読み上げる場合でも表現できる。
+
+### 12.3 unlock
+
+初回「音声ON」または再生ボタンの明示的user gestureでaudioをunlockする。
+
+`audio.play()` のPromise rejectionを必ず処理する。
+
+### 12.4 lifecycle
+
+AudioSessionControllerは以下を監視する。
+
+- `visibilitychange`
+- `pageshow`
+- `pagehide`
+- audio `playing`
+- audio `pause`
+- audio `ended`
+- audio `error`
+- persona切替
+- route変更
+- 新しい発話開始
+
+backgroundでは無理に喋り続けない。
+
+foreground復帰時も勝手に途中再生せず、原則停止状態へ戻し、必要ならユーザー操作で再生。
+
+### 12.5 streaming transport
+
+`fetch().body` を直接 `<audio>` へ渡す前提にしない。
+
+PoCでAivis公式streaming方式をiPhone standalone PWAで実証し、次のいずれかを選定する。
+
+- MediaSource対応方式
+- progressive playable response URL
+- Blob完成後再生
+- Web Audio decode/playback
+
+本番方式はPoC結果で確定する。
 
 ---
 
-## 22. Audio UX
+# Part E. Lip Sync
 
-設定項目:
+## 13. 原則
 
-```text
-音声を使う        ON/OFF
-返答を自動再生    ON/OFF
-音量              0-100
-ナレーション表示  ON/OFF
-```
-
-モデル吹き出しごとに:
+CURRENTの
 
 ```text
-🔊 再生
+busy = talking
 ```
 
-を設置する。
+による周期的 `aa` 口パクは廃止する。
 
-自動再生OFFでも、過去の返答をタップして再生可能にする。
+新原則:
+
+```text
+thinking/requesting/streaming中 → 口を動かさない
+actual audio playing中 → lip sync
+```
+
+### 13.1 Phase 1
+
+まずはaudio stateだけで簡易open/close。
+
+### 13.2 Phase 2
+
+`AnalyserNode` のRMSで音量連動。
+
+```text
+voice audio
+→ Web Audio AnalyserNode
+→ RMS amplitude
+→ smoothed mouth open
+→ VRM aa
+```
+
+Web Audio不具合がある実機ではlip syncをOFFにし、**音声再生を優先**する。
+
+### 13.3 禁止
+
+`lipSync` をLLM metadataへ含めない。
+
+lip syncは音声波形という実測値から決める。
 
 ---
 
-## 23. Privacy / Cache
+# Part F. UI
 
-会話は親密な内容を含む可能性が高い。
-
-Phase 1ではサーバー側に生成音声を永続保存しない。
+## 14. 表示
 
 ```text
-Gemini API -> existing
-TTS provider -> speech text only
-Audio -> browserで再生
+[小さな半透明 narration]
+しずくは一瞬言葉を止め、視線を横へ逃がした。
+
+しずく
+[通常speech bubble]
+……急にそういうこと言うんですね。ふふ、でも嬉しいです。
+                         🔊
 ```
 
-推奨:
+narration:
 
-- server persistent cacheなし
-- provider request logging条件を確認
-- 設定画面に利用providerを表示
+- speechより小さい文字
+- 半透明
+- キャラ名ラベルなし
+- 最大2文
+- TTS対象外
 
-将来コスト削減が必要になった場合のみ、定型idle line等に限定してstatic cacheする。
+speech:
 
-ユーザー固有会話のCDN永続cacheは初期実装では行わない。
+- CURRENT bubbleを継続
+- 各model messageに再生ボタン
+
+設定:
+
+- 音声ON/OFF
+- 自動再生ON/OFF
+- 簡易音声モード（optional）
 
 ---
 
-# Part C. 実装ロードマップ
+# Part G. Cache / Cost
 
-## Phase E1 — Structured Emotion
+## 15. Cache方針
 
-目的: 地の文とセリフの分離だけ完成させる。
+個人会話speechをCDNへ永続cacheしない。
 
-変更候補:
+session内では同じmodel messageの再生用Blobをmemory cacheし、再生ボタンを押すたびに再課金しない。
+
+永続cache可:
+
+- 定型idle line
+- 固定system voice sample
+
+永続cache不可:
+
+- 個人会話speech
+- memoryに依存するセリフ
+
+---
+
+# Part H. Voice Casting
+
+## 16. 基本方針
+
+最初から5人×複数providerを本番運用しない。
 
 ```text
-src/lib/types.ts
-src/lib/prompt.ts
-src/app/api/chat/route.ts
-src/app/chat/page.tsx
-src/lib/dialogue-protocol.ts  NEW
+5キャラ
+  ↓ 原則
+Aivis Cloud
+  ↓ 特定キャラだけA/B評価で明確に優れる場合
+COEIROINK等
+  ↓ 障害時
+approved fallback or text-only
+```
+
+### 16.1 つくよみちゃん
+
+採用候補として残す。
+
+採用時はライセンスレビュー結果をVoice Registryへ記録し、creditsから
+
+```text
+しずく — Voice: COEIROINK:つくよみちゃん
+```
+
+のように確認可能にする。
+
+音声素材そのものの再配布はしない。
+
+---
+
+# Part I. PoC Gate
+
+## 17. Phase 0 — 実装前Technical PoC
+
+以下3つがPASSするまで本実装へ進まない。
+
+### PoC 1: iPhone standalone PWA × Aivis
+
+対象: しずく1人
+
+確認:
+
+- 手動再生
+- 連続20〜50回
+- autoplay after unlock
+- 消音状態
+- Bluetooth
+- background → foreground
+- 画面ロック
+- persona切替中の停止
+- route変更
+- 通信遅延
+- TTS生成失敗
+- play() rejection
+
+PASS条件:
+
+- 勝手な再開なし
+- 二重再生なし
+- persona切替後の旧音声残留なし
+- 復帰不能なし
+
+### PoC 2: Gemini structured streaming
+
+100ターン程度生成。
+
+schema:
+
+```text
+narration
+speech
+expression
+emotionIntensity
+motionCue
+voiceStyle
+pause
+memory
 ```
 
 Acceptance:
 
-- narrationとspeechが別表示
-- speechだけがChatMessage.textにも保存される
-- 既存save dataが読める
-- expressionが現在同様に動く
-- narrationなしの返答も正常
-- malformed model outputで会話が壊れない
+- raw JSON露出 0
+- narration誤読み上げ 0
+- memory表示 0
+- invalid expression 0
+- interrupted streamで履歴破壊 0
+- turn_completeなしのpartial save 0
+
+### PoC 3: Voice casting / latency / cost
+
+同じ20セリフで比較。
+
+候補:
+
+- Aivis 2〜3声
+- つくよみちゃん
+- 必要ならElevenLabs 1声
+
+評価:
+
+- キャラ本人に聞こえるか
+- 毎日聞いて疲れないか
+- happy/shy/sadでも同一人物に聞こえるか
+- first audioまでのms
+- 100文字あたりの実コスト
 
 ---
 
-## Phase E2 — Voice Provider PoC
+# Part J. Implementation Phases
 
-目的: 1キャラだけ自然音声を出す。
+## Phase 1 — Canonical Dialogue Contract
 
-第一候補: Aivis Cloud API
+- `ModelTurn`
+- `ModelPerformanceIntent`
+- memory field化
+- legacy adapter
+- save互換
+- `patchLastModel()`
 
-変更候補:
+音声なし。
 
-```text
-src/app/api/tts/route.ts       NEW
-src/lib/voice/types.ts         NEW
-src/lib/voice/registry.ts      NEW
-src/lib/voice/providers/*      NEW
-src/lib/useCharacterVoice.ts   NEW
-```
+## Phase 2 — Emotion UI
 
-Acceptance:
+- narration + speech分離表示
+- narration保存
+- recentPerformance直近2ターン
+- CURRENT expression動作維持
+- motionCueは保存のみ、実行しない
 
-- しずく1キャラでTTS再生
-- API keyはbrowserへ露出しない
-- narrationを読まない
-- auto play ON/OFF
-- 再生ボタンあり
-- iPhone実機で音が出る
+## Phase 3 — One Character Voice
 
----
+- しずく1人
+- Aivis
+- 手動再生
+- AudioSessionController
+- Voice Registry
+- privacy logging
 
-## Phase E3 — 5 Character Casting
+## Phase 4 — Auto Voice + 5 Character Casting
 
-目的: 各キャラに別voiceを割り当てる。
+- audio unlock
+- interruption処理
+- 自動再生
+- 5人voice registry確定
+- credits
+- approved fallback
 
-作業:
+## Phase 5 — Audio-driven Lip Sync
 
-- 各キャラ2〜3 voiceを試聴
-- 実機A/B
-- ライセンス確認
-- `voice-registry.ts`へ確定値登録
-- credits UI
+- busy口パク削除
+- playing連動
+- RMS lip sync
+- unsupported/failure時lip sync OFF fallback
 
-つくよみちゃん採用はこのPhaseで判断する。
+## Phase 6 — PerformanceController
 
----
+- bone ownership
+- look_away
+- small_nod
+- head_tilt
+- expression intensity
+- VRMA統合
 
-## Phase E4 — Audio Lip Sync
+## Phase 7 — Advanced Sync（必要時のみ）
 
-目的: 音声と口を同期。
-
-Acceptance:
-
-- thinking中は口を動かさない
-- speaking中のみ口を動かす
-- 音声の無音に合わせて口が閉じる
-- audio stop / route changeで必ず停止
-
----
-
-## Phase E5 — Emotion Performance
-
-目的: narration metadataを3D演技へつなぐ。
-
-- emotionIntensity
-- look away
-- small nod
-- head tilt
-- voice style
-
-を追加。
-
-大きなジェスチャーは既存VRMA追加工程へ回す。
+- 文単位TTS先読み
+- viseme/phoneme
+- speech-motion同期
 
 ---
 
-# Part D. テスト
+# Part K. Acceptance Criteria
 
-## 24. Structured response tests
+## 18. 会話
 
-最低ケース:
+- narrationとspeechが明確に分離
+- narrationなしターンを自然に生成できる
+- narrationが通常50文字以内
+- speechのみ既存conversation historyへ入る
+- raw structured outputがUIへ露出しない
+- memoryがユーザーへ表示されない
 
-1. narration + speech
-2. speech only
-3. memoryあり
-4. narrationに改行
-5. malformed JSON line
-6. stream途中切断
-7. expression unknown
-8. empty speech
-9. 旧ChatMessage load
+## 19. 音声
 
----
+- narrationを絶対に読み上げない
+- user message/memory/system promptをTTS providerへ送らない
+- キャラごとの声が固定
+- fallback voiceは事前承認済みのみ
+- provider障害時にtext-onlyへ安全に落ちる
 
-## 25. Voice tests
+## 20. iPhone PWA
 
-- Japanese punctuation
-- `……`
-- `〜`
-- 英数字混在
-- 人名
-- 長文
-- emoji除去
-- 連続再生
-- persona切替中の再生停止
-- iOS mute / autoplay制約
-- Bluetoothイヤホン
-- app background -> foreground
+- user gesture後に安定再生
+- background/foregroundで二重再生・勝手な再開なし
+- persona/route変更で旧音声停止
+- play() reject時にUIが壊れない
 
----
+## 21. VRM
 
-## 26. UX評価テスト
-
-同じ会話を以下でA/Bする。
-
-A:
-
-```text
-speech only
-```
-
-B:
-
-```text
-narration + speech + expression + voice
-```
-
-評価項目:
-
-```text
-キャラが生きている感じ
-感情が伝わる
-会話が単調でない
-セリフが自然
-ナレーションが邪魔でない
-声がキャラに合う
-待ち時間が気にならない
-```
-
-5段階で比較する。
+- thinking中に口パクしない
+- audio playing中のみlip sync
+- lip sync failureでも音声は継続
+- VRMA / shy / gaze / motionCueが同一boneへ無秩序に競合しない
 
 ---
 
-# Part E. 設計判断
+# Part L. Non-goals
 
-## 27. 今回の推奨結論
+初期実装では行わない。
 
-### Decision 1
-
-**情緒表現は「ナレーション」と「実発言」を別データとして持つ。**
-
-セリフ本文に `(照れながら)` のような動作を混ぜ続けない。
-
-### Decision 2
-
-**モデル出力を構造化する。**
-
-現行 `[happy] text [memory]` の文字列protocolを将来的に卒業する。
-
-### Decision 3
-
-**TTSはprovider abstractionを入れてから実装する。**
-
-1provider直書きはしない。
-
-### Decision 4
-
-**production first candidateはAivis Cloud。**
-
-日本語自然さ、低遅延、クラウド統合のバランスが良い。
-
-### Decision 5
-
-**つくよみちゃんは捨てない。**
-
-別キャラへの声当てが許諾されており、有力voice候補として5キャラcasting時に比較する。
-
-### Decision 6
-
-**TTSが読むのはspeechのみ。**
-
-ナレーションまで読み上げると「小説の朗読」になり、キャラクター本人が話している感覚が弱くなる。
-
-### Decision 7
-
-**口パクはLLM生成中ではなくaudio playbackへ同期する。**
-
-これはTTS導入と同時に直すべき既存違和感。
+- 完全な音素viseme
+- 感情ごとの専用VRMA大量生成
+- 5キャラ×複数provider同時production運用
+- narration音声化
+- user voice cloning
+- 長期音声ファイル永続保存
 
 ---
 
-# Part F. SOLレビュー依頼事項
+## 22. 最終設計判断
 
-レビューでは特に以下を確認してほしい。
+レビュー判定は **APPROVE WITH CHANGES**。
 
-1. NDJSON/SSE方式とGemini streamingの相性により良い選択肢がないか
-2. `ChatMessage.text = speech` を維持するbackward compatibility方針が妥当か
-3. narrationが会話を冗長にしないprompt制約が十分か
-4. Aivis Cloud primary / COEIROINK optionalという選定が妥当か
-5. iPhone PWAのaudio autoplay制約への設計漏れがないか
-6. Web Audio analyserによるlip syncが性能面で妥当か
-7. TTS privacy / logging / cache方針に不足がないか
-8. 既存memory・expression・VRMAロジックへのデグレリスク
-9. Phase分割が細かすぎない/大きすぎないか
-10. 実装前に追加すべきテスト
+以下は維持する。
 
----
+- narration / speech / hidden performance intent の3層分離
+- `ChatMessage.text = speech`
+- narration非TTS
+- provider abstraction
+- thinking ≠ speaking
 
-## 28. 実装開始条件
+以下はレビューを受けて変更した。
 
-以下を満たしてから実装へ進む。
+- Gemini → NDJSON ではなく **Gemini structured JSON → server-owned events**
+- `turn_complete` canonical responseのみ保存
+- memoryをstructured fieldへ移行
+- `PerformanceController`追加
+- `AudioSessionController`追加
+- generation/audio stateを分離
+- lipSyncをLLM metadataから削除
+- narration通常上限を50文字へ短縮
+- recentPerformance直近2ターン追加
+- Voice Registryライセンス情報を詳細化
+- Browser SpeechSynthesisの自動fallbackを禁止
+- TTS privacy境界を `speech only` と明文化
 
-```text
-[ ] SOL設計レビュー完了
-[ ] 構造化response protocol確定
-[ ] Aivis Cloudで1キャラ試聴
-[ ] つくよみちゃんを同じセリフで比較試聴
-[ ] voice license一覧作成
-[ ] iPhone PWA audio再生PoC
-```
-
----
-
-## 29. 外部仕様確認先
-
-2026-08-30時点で確認した公式情報:
-
-- Aivis Cloud API / AivisSpeech / AivisHub
-- COEIROINK 利用規約
-- COEIROINK つくよみちゃん音声利用条件
-- VOICEVOX 利用規約
-- ElevenLabs Text-to-Speech API
-
-各voice/modelの利用条件は実装着手時にも再確認すること。音声モデルのライセンスはソフトウェア本体のライセンスと別の場合がある。
+**次の作業は Phase 0 Technical PoC。PoC PASS前に本実装へ進まない。**
