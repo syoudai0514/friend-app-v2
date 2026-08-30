@@ -7,6 +7,7 @@
 - PR: `#16`
 - Original implementation HEAD reviewed: `34a6f82792c7d08e139281ca76ebcb3cb047db0a`
 - Gemini Schema subset fix: `0cbae89aad69c1ca225f87560bd0984a4c4bd562`
+- Transaction acknowledgment fix: `00371b4c0ad46694e8323c29aa7df596cf56d142`
 
 ## Implemented architecture
 
@@ -15,8 +16,9 @@
 - The Gemini `responseJsonSchema` intentionally uses only the CURRENT supported provider subset. String length rules such as narration <= 80, speech <= 360, and memory <= 120 are enforced in `validateModelTurn()` rather than with provider-side `minLength` / `maxLength` keywords.
 - `TurnDraft` exists only in `ChatPage` React state and is never put in `AppState`; interruption, abort, reload, persona switch, and route change cannot persist a partial model reply.
 - `commitModelTurn()` is the canonical completion transaction: one speech message (`ChatMessage.text = ModelTurn.speech`), at most one memory, and affection +1 in one persistent state transition. `turnId` prevents duplicate/stale commits.
+- The store also owns a **session-only `commitAck`** next to persistent `AppState`. That acknowledgment is created in the exact same React state transition that applies the canonical conversation transaction, but only `AppState` is serialized. `ChatPage` no longer treats a synchronous boolean return as proof of commit; autoplay/TTS eligibility waits for this acknowledgment.
 - Speech history is the only normal model history sent back to Gemini. Up to two narration/expression/motion records are passed separately as `recentPerformance`.
-- The UI renders narration above character name and speech. Streaming preview is volatile and is replaced by the canonical persisted message only after `turn_complete`.
+- The UI renders narration above character name and speech. Streaming preview is volatile and is replaced by the canonical persisted message only after `turn_complete` and successful commit acknowledgment.
 - New sends, persona changes, and route unmount abort generation, clear the volatile draft, invalidate stale turns, and stop audio.
 
 ## Voice and audio
@@ -37,6 +39,7 @@
 
 - Save schema remains additive/backward compatible. Existing `ChatMessage.text` is retained; narration/performance/turn/audio-related fields are optional/defaulted.
 - Existing v1/v2 exports continue through reconciliation; no user data reset is performed.
+- `commitAck` is runtime/session-only and is never persisted to localStorage or exported save data.
 
 ## Environment and Aivis setup
 
@@ -46,9 +49,9 @@
 
 ## Validation status
 
-- Previous PR HEAD `34a6f827...` had GitHub Actions `validate` SUCCESS (`npm test`, `npm run lint`, `npm run build`).
-- The final review found Gemini provider-schema keywords `minLength` / `maxLength` that are outside the CURRENT accepted `responseJsonSchema` subset. Commit `0cbae89...` removes those provider keywords while preserving all string-length checks in application runtime validation.
-- A new CI run must be GREEN on the post-fix branch HEAD before the PR is considered review-ready.
+- GitHub Actions `validate` run #10 on HEAD `2801aadb6c2ceb681634bfb57d7940c4d559f11a` was **SUCCESS** (`npm test`, `npm run lint`, `npm run build`).
+- The previous provider-schema issue is resolved: `minLength` / `maxLength` are removed from Gemini `responseJsonSchema`, while application validation still enforces narration/speech/memory limits.
+- The transaction acknowledgment race identified by the second independent review is addressed by the session-only `commitAck` boundary. A new CI run on the new PR HEAD must be GREEN before final approval.
 - iPhone standalone PWA validation remains **NOT VERIFIED** in this environment.
 - First-audio latency p50/p95 remains **not measured** until a real approved voice profile/API key is configured.
 
@@ -75,11 +78,12 @@
 
 ## Review handoff
 
-Independent SOL review should focus on the post-fix HEAD and confirm:
+Independent SOL review should focus on the current PR HEAD and confirm:
 
-1. GitHub Actions validate is GREEN after the schema subset fix.
-2. No unsupported provider-schema keywords remain.
+1. GitHub Actions validate is GREEN.
+2. No unsupported Gemini provider-schema keywords remain.
 3. TurnDraft never enters persistent state.
-4. `turn_complete` remains the only model/memory/affection/TTS eligibility boundary.
-5. Aivis remains disabled unless voice + license + approval configuration is complete.
-6. iPhone items above are reported as manual/not-verified rather than inferred.
+4. `turn_complete` plus session-only `commitAck` is the only boundary that makes autoplay/TTS eligible.
+5. Queued persona changes can reject the persistent commit without any stale autoplay.
+6. Aivis remains disabled unless voice + license + approval configuration is complete.
+7. iPhone items above are reported as manual/not-verified rather than inferred.
