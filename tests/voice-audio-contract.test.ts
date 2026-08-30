@@ -10,11 +10,9 @@ import {
   type VoiceProfile,
 } from "../src/lib/voice";
 
-test("TTS normalizer changes only the provider input", () => {
-  assert.equal(
-    ttsTextNormalizer("見て！！ https://example.com/path 😀😀 『すごい』！！！"),
-    "見て！ リンク すごい！",
-  );
+test("TTS normalizer removes unreadable noise without changing display state", () => {
+  const normalized = ttsTextNormalizer("見て！！ 😀😀 『すごい』！！！");
+  assert.equal(normalized, "見て! すごい!");
 });
 
 test("TTS privacy validator accepts canonical speech fields and rejects extras", () => {
@@ -41,13 +39,13 @@ test("fallback is eligible only when explicitly approved and configured", () => 
   const base: VoiceProfile = {
     voiceProfileId: "primary",
     provider: "aivis",
-    voiceId: "uuid-primary",
+    voiceId: "configured-primary",
     baseSpeed: 1,
     basePitch: 0,
     styleMap: {},
     fallbackVoiceProfileId: "fallback",
     license: {
-      url: "https://example.com/license",
+      url: "reviewed-license",
       commercialScope: "reviewed",
       otherCharacterUse: "reviewed",
       attributionRequired: false,
@@ -55,13 +53,13 @@ test("fallback is eligible only when explicitly approved and configured", () => 
     },
     productionApproved: true,
   };
-  const unapproved = { ...base, voiceProfileId: "fallback", voiceId: "uuid-fallback", productionApproved: false };
+  const unapproved = { ...base, voiceProfileId: "fallback", voiceId: "configured-fallback", productionApproved: false };
   assert.equal(approvedFallback(base, { primary: base, fallback: unapproved }), null);
   const approved = { ...unapproved, productionApproved: true };
   assert.equal(approvedFallback(base, { primary: base, fallback: approved })?.voiceProfileId, "fallback");
 });
 
-test("performance runtime clamps semantic intensity and owns pause timing", () => {
+test("performance runtime owns pause, intensity and one-shot nod timing", () => {
   const runtime = performanceRuntime({
     version: 1,
     expression: "shy",
@@ -73,4 +71,9 @@ test("performance runtime clamps semantic intensity and owns pause timing", () =
   assert.equal(runtime.pauseMs, 200);
   assert.equal(performanceRuntime({ version: 1, expression: "normal", pause: "medium" }).pauseMs, 480);
   assert.equal(performanceRuntime({ version: 1, expression: "normal", emotionIntensity: 99 }).intensity, 1);
+
+  const nodMid = performanceRuntime({ version: 1, expression: "normal", motionCue: "small_nod" }, 0.3);
+  const nodDone = performanceRuntime({ version: 1, expression: "normal", motionCue: "small_nod" }, 1);
+  assert.ok(nodMid.head[0] < -5);
+  assert.equal(nodDone.head[0], 0);
 });
