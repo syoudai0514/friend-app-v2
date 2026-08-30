@@ -170,9 +170,12 @@ const onServer = () => false;
 export function AppStateProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>(loadState);
   const stateRef = useRef(state);
-  stateRef.current = state;
   const transactionLedger = useRef(new ConversationTransactionLedger());
   const ready = useSyncExternalStore(neverChanges, onClient, onServer);
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   useEffect(() => {
     if (!ready) return;
@@ -239,9 +242,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           transactionLedger.current.release(turnId);
           return snapshot;
         }
-        const next = applyConversationTransaction(snapshot, turn);
-        stateRef.current = next;
-        return next;
+        return applyConversationTransaction(snapshot, turn);
       });
       return true;
     },

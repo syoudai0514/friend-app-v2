@@ -5,19 +5,16 @@ import nextTs from "eslint-config-next/typescript";
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
-  // Override default ignores of eslint-config-next.
   globalIgnores([
-    // Default ignores of eslint-config-next:
     ".next/**",
     "out/**",
     "build/**",
+    ".test-dist/**",
     "next-env.d.ts",
   ]),
   {
     // react-three-fiberはuseFrame/useThreeで得たオブジェクトを直接書き換えて
-    // 毎フレーム描画するのが前提のライブラリ（Reactのstateを介さない）。
-    // React Compiler向けの新しい厳格なフック規約はこの前提と噛み合わず、
-    // 正しいr3fコードを誤検知するため、キャラ描画まわりだけ無効化する
+    // 毎フレーム描画するのが前提。React Compiler向け規約の誤検知だけ局所的に外す。
     files: ["src/components/character/**/*.{ts,tsx}"],
     rules: {
       "react-hooks/immutability": "off",

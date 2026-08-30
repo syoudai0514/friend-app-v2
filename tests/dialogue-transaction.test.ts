@@ -70,7 +70,7 @@ test("legacy tags are isolated and converted to canonical speech", () => {
 test("conversation transaction commits model/memory/affection at most once per turn ledger", () => {
   const ledger = new ConversationTransactionLedger();
   assert.equal(ledger.accept("turn_12345678"), true);
-  let next = applyConversationTransaction(state, turn, 2);
+  const next = applyConversationTransaction(state, turn, 2);
   assert.equal(ledger.accept("turn_12345678"), false);
   assert.equal(next.messages.length, state.messages.length + 1);
   assert.equal(next.messages.at(-1)?.text, turn.speech);
