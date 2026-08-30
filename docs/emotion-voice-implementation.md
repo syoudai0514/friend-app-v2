@@ -16,7 +16,7 @@
 - The Gemini `responseJsonSchema` intentionally uses only the CURRENT supported provider subset. String length rules such as narration <= 80, speech <= 360, and memory <= 120 are enforced in `validateModelTurn()` rather than with provider-side `minLength` / `maxLength` keywords.
 - `TurnDraft` exists only in `ChatPage` React state and is never put in `AppState`; interruption, abort, reload, persona switch, and route change cannot persist a partial model reply.
 - `commitModelTurn()` is the canonical completion transaction: one speech message (`ChatMessage.text = ModelTurn.speech`), at most one memory, and affection +1 in one persistent state transition. `turnId` prevents duplicate/stale commits.
-- The store also owns a **session-only `commitAck`** next to persistent `AppState`. That acknowledgment is created in the exact same React state transition that applies the canonical conversation transaction, but only `AppState` is serialized. `ChatPage` no longer treats a synchronous boolean return as proof of commit; autoplay/TTS eligibility waits for this acknowledgment.
+- The store owns a **session-only `commitAck`** next to persistent `AppState`. The acknowledgment is produced in the exact same React state transition that applies the canonical conversation transaction, while only `AppState` is serialized. `ChatPage` no longer trusts a synchronous return value; autoplay/TTS eligibility waits for this acknowledgment.
 - Speech history is the only normal model history sent back to Gemini. Up to two narration/expression/motion records are passed separately as `recentPerformance`.
 - The UI renders narration above character name and speech. Streaming preview is volatile and is replaced by the canonical persisted message only after `turn_complete` and successful commit acknowledgment.
 - New sends, persona changes, and route unmount abort generation, clear the volatile draft, invalidate stale turns, and stop audio.
@@ -51,7 +51,7 @@
 
 - GitHub Actions `validate` run #10 on HEAD `2801aadb6c2ceb681634bfb57d7940c4d559f11a` was **SUCCESS**.
 - GitHub Actions `validate` run #16 after the transaction-acknowledgment code fix was **SUCCESS** (`npm test`, `npm run lint`, `npm run build`).
-- The previous provider-schema issue is resolved: `minLength` / `maxLength` are removed from Gemini `responseJsonSchema`, while application validation still enforces narration/speech/memory limits.
+- The provider-schema issue is resolved: `minLength` / `maxLength` are removed from Gemini `responseJsonSchema`, while application validation still enforces narration/speech/memory limits.
 - The transaction acknowledgment race identified by the second independent review is resolved by gating autoplay/TTS eligibility on the session-only `commitAck` emitted atomically with the canonical `AppState` transaction.
 - iPhone standalone PWA validation remains **NOT VERIFIED** in this environment.
 - First-audio latency p50/p95 remains **not measured** until a real approved voice profile/API key is configured.
