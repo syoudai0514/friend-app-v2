@@ -49,9 +49,10 @@
 
 ## Validation status
 
-- GitHub Actions `validate` run #10 on HEAD `2801aadb6c2ceb681634bfb57d7940c4d559f11a` was **SUCCESS** (`npm test`, `npm run lint`, `npm run build`).
+- GitHub Actions `validate` run #10 on HEAD `2801aadb6c2ceb681634bfb57d7940c4d559f11a` was **SUCCESS**.
+- GitHub Actions `validate` run #16 on the transaction-acknowledgment follow-up HEAD was also **SUCCESS** (`npm test`, `npm run lint`, `npm run build`).
 - The previous provider-schema issue is resolved: `minLength` / `maxLength` are removed from Gemini `responseJsonSchema`, while application validation still enforces narration/speech/memory limits.
-- The transaction acknowledgment race identified by the second independent review is addressed by the session-only `commitAck` boundary. A new CI run on the new PR HEAD must be GREEN before final approval.
+- The transaction acknowledgment race identified by the second independent review is resolved by gating autoplay/TTS eligibility on the session-only `commitAck` emitted atomically with the canonical `AppState` transaction.
 - iPhone standalone PWA validation remains **NOT VERIFIED** in this environment.
 - First-audio latency p50/p95 remains **not measured** until a real approved voice profile/API key is configured.
 
