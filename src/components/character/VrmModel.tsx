@@ -7,6 +7,8 @@ import type { VRM } from "@pixiv/three-vrm";
 import { createVRMAnimationClip } from "@pixiv/three-vrm-animation";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { EXPRESSIONS, type Expression } from "@/lib/expressions";
+import { performanceRuntime } from "@/lib/performance";
+import type { ModelPerformanceIntent } from "@/lib/types";
 import { useVrm } from "./useVrm";
 import { useVrma } from "./useVrma";
 import type { StageViewState } from "./stage-view";
@@ -90,12 +92,9 @@ function applyBoneOffset(
   bone.node.quaternion.multiply(bone.applied).normalize();
 }
 
-/** v1のまばたき間隔・閉眼時間に合わせる */
 const BLINK_MIN_MS = 2600;
 const BLINK_MAX_MS = 6200;
 const BLINK_CLOSE_MS = 130;
-
-/** カメラが顔や後頭部の内側へ入り込まない、頭の中心からの最小距離（m） */
 const MIN_HEAD_CAMERA_DISTANCE = 0.45;
 
 export interface ModelBounds {
@@ -118,10 +117,6 @@ function isBodyMaterial(material: THREE.Material): boolean {
   return /Body_00_SKIN/.test(material.name);
 }
 
-/**
- * 衣装元のBodyには頭の下地まで含まれる。別体型へ重ねると顔より手前へ出るため、
- * 頭ボーンに追従する三角形だけを除き、首より下の肌補完は残す。
- */
 function bodyGeometryWithoutHead(
   mesh: THREE.SkinnedMesh,
   head: THREE.Object3D,
@@ -193,7 +188,6 @@ function bodyGeometryWithoutHead(
 }
 
 type TexturedMaterial = THREE.Material & { map: THREE.Texture | null };
-
 type Rgb = readonly [number, number, number];
 
 function hasTextureMap(material: THREE.Material): material is TexturedMaterial {
@@ -208,8 +202,6 @@ function parseHexColor(color: string): Rgb | null {
 }
 
 function isSkinPixel(r: number, g: number, b: number, source: Rgb): boolean {
-  // 白い靴下や黒い下着は残し、元の肌色と同じ色相を持つ部分だけを対象にする。
-  // 明暗はテクスチャ側の陰影として許容し、RGBの比率で肌かどうかを判定する。
   if (r < 65 || g < 45 || b < 35 || r - g < 4 || g - b < 2) return false;
   const pixelTotal = r + g + b;
   const sourceTotal = source[0] + source[1] + source[2];
@@ -274,7 +266,6 @@ function randomBetween(min: number, max: number): number {
   return min + Math.random() * (max - min);
 }
 
-/** 全身が収まるカメラ距離を、実際の身長(height)とカメラの垂直画角から逆算する */
 function fitDistance(visibleHeight: number, verticalFovRad: number): number {
   return visibleHeight / 2 / Math.tan(verticalFovRad / 2);
 }
@@ -284,6 +275,8 @@ export function VrmModel({
   motionUrl,
   expression,
   talking,
+  lipSync,
+  performance,
   reducedMotion,
   orbitControlsRef,
   materialMode = "full",
@@ -311,6 +304,8 @@ export function VrmModel({
   motionUrl: string;
   expression: Expression;
   talking: boolean;
+  lipSync: number;
+  performance?: Partial<ModelPerformanceIntent>;
   reducedMotion: boolean;
   orbitControlsRef: RefObject<OrbitControlsImpl | null>;
   materialMode?: VrmMaterialMode;
@@ -338,7 +333,6 @@ export function VrmModel({
   const { vrmAnimation } = useVrma(motionUrl);
   const { camera } = useThree();
   const blink = useRef({ nextAt: 0, closingUntil: 0 });
-  const talkClock = useRef(0);
   const mixer = useRef<THREE.AnimationMixer | null>(null);
   const activeAction = useRef<THREE.AnimationAction | null>(null);
   const clipDuration = useRef(0);
@@ -346,14 +340,16 @@ export function VrmModel({
   const shyPose = useRef<ShyPose | null>(null);
   const headWorldPosition = useRef(new THREE.Vector3());
   const headCameraOffset = useRef(new THREE.Vector3());
+  const performanceStartedAt = useRef(0);
+
+  useEffect(() => {
+    performanceStartedAt.current = window.performance.now();
+  }, [expression, performance]);
 
   useEffect(() => {
     if (error) onError?.();
   }, [error, onError]);
 
-  // VRoidのマテリアル名にある _CLOTH / _HAIR を境界として、ベース側の
-  // パーツを隠したり、提供元側の対象パーツだけを残したりする。
-  // アウトライン材も元の名前を含むので同じ判定で揃う。
   useEffect(() => {
     if (!vrm) return;
     vrm.scene.traverse((obj) => {
@@ -377,8 +373,6 @@ export function VrmModel({
     });
   }, [hideBody, hideClothes, hideHair, materialMode, vrm]);
 
-  // 衣装元は首より下のBodyと服だけに固定する。顔・目・髪は常に本人側を使い、
-  // 体型差やモーションで衣装元の頭の下地が前へ出ないようにする。
   useEffect(() => {
     if (!vrm || materialMode !== "bodyAndClothes") return;
     const head = vrm.humanoid.getRawBoneNode("head");
@@ -407,14 +401,10 @@ export function VrmModel({
     };
   }, [materialMode, vrm]);
 
-  // 表示対象のパーツを固定してから親へ準備完了を伝える。これによりベース側を
-  // 隠すタイミングでも、一瞬だけ衣装元の全身が混ざる状態を作らない。
   useEffect(() => {
     if (vrm) onReady?.();
   }, [vrm, onReady]);
 
-  // 衣装側のBody形状を一緒に使うことで、VRoidの書き出し時に省かれた身体の面を補う。
-  // Body画像に焼き込まれた下着・靴下・陰影は残し、肌に当たる色だけ着る側へ合わせる。
   useEffect(() => {
     if (!vrm || !bodySkinColor || !bodySkinSourceColor) return;
     const source = parseHexColor(bodySkinSourceColor);
@@ -450,8 +440,6 @@ export function VrmModel({
     };
   }, [bodySkinColor, bodySkinSourceColor, vrm]);
 
-  // VRoid共通UVを使い、顔の形状や表情モーフはベースキャラのまま、
-  // 瞳・眉・口の画像だけを差し替える。読み直し時は必ず元の画像へ戻す。
   useEffect(() => {
     if (!vrm) return;
     const requests = [
@@ -504,8 +492,6 @@ export function VrmModel({
     };
   }, [browsTextureUrl, irisTextureUrl, mouthTextureUrl, vrm]);
 
-  // 表情用の頭・目の差分回転はVRMごとに作る。切替時は必ず元へ戻し、
-  // 次のモデルやモーションへ差分を持ち越さない。
   useEffect(() => {
     moodWeights.current = initialMoodWeights();
     blink.current = { nextAt: 0, closingUntil: 0 };
@@ -521,10 +507,6 @@ export function VrmModel({
     };
   }, [vrm]);
 
-  // VRMは何もしないとT-pose（腕を真横に伸ばした基本姿勢）のままなので、
-  // 自然に立った姿に見えるよう腕を下ろす。normalizedボーンは
-  // 「回転0 = T-pose」という決まった基準で作られているため、
-  // 前回のような差分ではなく絶対角度で指定する
   useEffect(() => {
     if (!vrm) return;
     const humanoid = vrm.humanoid;
@@ -535,8 +517,6 @@ export function VrmModel({
     if (rightUpperArm) rightUpperArm.rotation.z = -armDown;
   }, [vrm]);
 
-  // モーション(VRMA)が読めたら再生する。読めなかった・まだ無いモーションIDのときは
-  // 上のarmDownによる静止ポーズのままになる
   useEffect(() => {
     if (!vrm || !vrmAnimation) {
       mixer.current = null;
@@ -545,30 +525,23 @@ export function VrmModel({
       return;
     }
     const clip = createVRMAnimationClip(vrmAnimation, vrm);
-    const m = new THREE.AnimationMixer(vrm.scene);
-    const action = m.clipAction(clip).setLoop(THREE.LoopRepeat, Infinity).play();
-
-    // ループの継ぎ目でポーズが不連続に飛ぶと、髪などのスプリングボーン物理が
-    // その勢いを拾って一瞬暴れることがある。ループのたびに物理状態を
-    // 今の姿勢でリセットして、暴れを引きずらないようにする
+    const animationMixer = new THREE.AnimationMixer(vrm.scene);
+    const action = animationMixer.clipAction(clip).setLoop(THREE.LoopRepeat, Infinity).play();
     const onLoop = () => vrm.springBoneManager?.reset();
-    m.addEventListener("loop", onLoop);
+    animationMixer.addEventListener("loop", onLoop);
 
-    mixer.current = m;
+    mixer.current = animationMixer;
     activeAction.current = action;
     clipDuration.current = clip.duration;
     return () => {
-      m.removeEventListener("loop", onLoop);
-      m.stopAllAction();
+      animationMixer.removeEventListener("loop", onLoop);
+      animationMixer.stopAllAction();
       mixer.current = null;
       activeAction.current = null;
       clipDuration.current = 0;
     };
   }, [vrm, vrmAnimation]);
 
-  // v1の立ち絵に近いサイズ感（全身〜ふくらはぎ）になる位置を初期カメラとして計算し、
-  // OrbitControlsの注視点として渡す。そのあとの拡大・回転・移動はユーザー操作に任せる。
-  // モデルごとの身長差を吸収するため、固定距離ではなく実際の全身の高さから逆算する
   useEffect(() => {
     if (!vrm) return;
     vrm.scene.updateMatrixWorld(true);
@@ -591,7 +564,6 @@ export function VrmModel({
     const centerZ = (box.min.z + box.max.z) / 2;
     const perspective = camera as THREE.PerspectiveCamera;
     const vFov = THREE.MathUtils.degToRad(perspective.fov);
-
     const visibleTop = box.max.y + height * 0.06;
     const visibleBottom = box.min.y + height * 0.06;
     const visibleHeight = visibleTop - visibleBottom;
@@ -605,11 +577,7 @@ export function VrmModel({
     if (controls) {
       controls.target.set(centerX, lookY, centerZ);
       controls.update();
-      // これで「↺」ボタン(reset)がこの初期位置に戻るようになる
       controls.saveState();
-
-      // ホームなど前の画面で動かしていた場合は、初期位置をreset用に保存したあとで
-      // そのカメラ位置・注視点・ズームへ戻す。
       if (initialView) {
         const restoredTarget = new THREE.Vector3().fromArray(initialView.target);
         const restoredPosition = new THREE.Vector3().fromArray(initialView.cameraPosition);
@@ -628,21 +596,27 @@ export function VrmModel({
     }
   }, [vrm, camera, fitCamera, initialView, minCameraDistance, onMeasured, orbitControlsRef]);
 
-  useFrame((state, delta) => {
+  useFrame((frameState, delta) => {
     if (!vrm) return;
 
+    const cueElapsedSeconds = reducedMotion
+      ? Number.POSITIVE_INFINITY
+      : Math.max(0, (window.performance.now() - performanceStartedAt.current) / 1000);
+    const runtimePerformance = performanceRuntime(
+      { expression, ...performance },
+      cueElapsedSeconds,
+    );
+
     const pose = shyPose.current;
-    // モーションの上に足した前フレーム分を一度外してから、今フレームの
-    // AnimationMixerを評価する。これをしないと、静止時に回転が毎フレーム累積する。
+    // ownership: 前フレームのsemantic overlayを外す → VRMA base motion → 今フレームoverlay。
     if (pose) clearShyPose(pose);
 
     if (mixer.current) {
-      // 視差効果を減らす設定のときはモーションも止める（姿勢はそのまま維持）
       mixer.current.timeScale = reducedMotion ? 0 : 1;
       if (syncMotion && activeAction.current && clipDuration.current > 0) {
         activeAction.current.time = reducedMotion
           ? 0
-          : state.clock.elapsedTime % clipDuration.current;
+          : frameState.clock.elapsedTime % clipDuration.current;
         mixer.current.update(0);
       } else {
         mixer.current.update(delta);
@@ -650,77 +624,82 @@ export function VrmModel({
     }
 
     if (pose) {
-      const target = expression === "shy" ? 1 : 0;
+      const target = [...runtimePerformance.head, ...runtimePerformance.eyes].some(
+        (value) => Math.abs(value) > 0.001,
+      )
+        ? 1
+        : 0;
       pose.weight = reducedMotion
         ? target
         : THREE.MathUtils.damp(pose.weight, target, 10, delta);
-      const w = pose.weight;
-      // 軽くうつむいて顔をそらし、目だけを下・反対側へ向ける照れ姿勢。
+      const weight = pose.weight;
       applyBoneOffset(
         pose.head,
-        THREE.MathUtils.degToRad(-9) * w,
-        THREE.MathUtils.degToRad(3.5) * w,
-        THREE.MathUtils.degToRad(-1.5) * w,
+        THREE.MathUtils.degToRad(runtimePerformance.head[0]) * weight,
+        THREE.MathUtils.degToRad(runtimePerformance.head[1]) * weight,
+        THREE.MathUtils.degToRad(runtimePerformance.head[2]) * weight,
       );
       applyBoneOffset(
         pose.leftEye,
-        THREE.MathUtils.degToRad(-7) * w,
-        THREE.MathUtils.degToRad(-3) * w,
-        0,
+        THREE.MathUtils.degToRad(runtimePerformance.eyes[0]) * weight,
+        THREE.MathUtils.degToRad(runtimePerformance.eyes[1]) * weight,
+        THREE.MathUtils.degToRad(runtimePerformance.eyes[2]) * weight,
       );
       applyBoneOffset(
         pose.rightEye,
-        THREE.MathUtils.degToRad(-7) * w,
-        THREE.MathUtils.degToRad(-3) * w,
-        0,
+        THREE.MathUtils.degToRad(runtimePerformance.eyes[0]) * weight,
+        THREE.MathUtils.degToRad(runtimePerformance.eyes[1]) * weight,
+        THREE.MathUtils.degToRad(runtimePerformance.eyes[2]) * weight,
       );
     }
 
-    const expr = vrm.expressionManager;
-    if (expr) {
-      // 切替時に表情がパッと飛ばないよう、各プリセットの値を短く補間する。
+    const expressionManager = vrm.expressionManager;
+    if (expressionManager) {
+      // expression morph ownership。semantic intensityは0..1にclamp済み。
       for (const name of MOOD_PRESETS) {
-        const target = EXPRESSIONS[expression].find(({ preset }) => preset === name)?.weight ?? 0;
+        const presetWeight =
+          EXPRESSIONS[expression].find(({ preset }) => preset === name)?.weight ?? 0;
+        const target = presetWeight * runtimePerformance.intensity;
         const value = reducedMotion
           ? target
           : THREE.MathUtils.damp(moodWeights.current[name], target, 14, delta);
         moodWeights.current[name] = value;
-        expr.setValue(name, value);
+        expressionManager.setValue(name, value);
       }
 
-      // まばたきは気分の表情と独立して動かす
-      const now = state.clock.elapsedTime * 1000;
-      const b = blink.current;
-      if (b.nextAt === 0) b.nextAt = now + randomBetween(BLINK_MIN_MS, BLINK_MAX_MS);
-      if (b.closingUntil === 0 && now >= b.nextAt) {
-        b.closingUntil = now + BLINK_CLOSE_MS;
+      const now = frameState.clock.elapsedTime * 1000;
+      const blinkState = blink.current;
+      if (blinkState.nextAt === 0) {
+        blinkState.nextAt = now + randomBetween(BLINK_MIN_MS, BLINK_MAX_MS);
       }
-      if (b.closingUntil > 0) {
-        expr.setValue("blink", 1);
-        if (now >= b.closingUntil) {
-          b.closingUntil = 0;
-          b.nextAt = now + randomBetween(BLINK_MIN_MS, BLINK_MAX_MS);
+      if (blinkState.closingUntil === 0 && now >= blinkState.nextAt) {
+        blinkState.closingUntil = now + BLINK_CLOSE_MS;
+      }
+      if (blinkState.closingUntil > 0) {
+        expressionManager.setValue("blink", 1);
+        if (now >= blinkState.closingUntil) {
+          blinkState.closingUntil = 0;
+          blinkState.nextAt = now + randomBetween(BLINK_MIN_MS, BLINK_MAX_MS);
         }
       } else {
-        expr.setValue("blink", 0);
+        expressionManager.setValue("blink", 0);
       }
 
-      // 返事を書いているあいだ、口をぱくぱくさせる
-      talkClock.current += delta;
-      const aa = talking ? Math.max(0, Math.sin(talkClock.current * 14)) * 0.6 : 0;
-      expr.setValue("aa", aa);
+      // lip morph ownershipは最後。generation/busyではなくactual audio playingだけ。
+      expressionManager.setValue(
+        "aa",
+        talking ? THREE.MathUtils.clamp(lipSync, 0, 1) * 0.72 : 0,
+      );
     }
 
-    // normalizedボーンと表情を反映してから、スプリングボーン等を更新する。
     vrm.update(delta);
 
-    // 呼吸とゆらぎ。視差効果を減らす設定のときは止める
     if (!reducedMotion) {
-      const t = state.clock.elapsedTime;
+      const time = frameState.clock.elapsedTime;
       vrm.scene.position.x = modelOffsetX;
-      vrm.scene.position.y = modelOffsetY + Math.sin(t * 1.5) * 0.006;
+      vrm.scene.position.y = modelOffsetY + Math.sin(time * 1.5) * 0.006;
       vrm.scene.position.z = modelOffsetZ;
-      vrm.scene.rotation.z = Math.sin(t * 0.85) * 0.006;
+      vrm.scene.rotation.z = Math.sin(time * 0.85) * 0.006;
     } else {
       vrm.scene.position.x = modelOffsetX;
       vrm.scene.position.y = modelOffsetY;
@@ -728,10 +707,6 @@ export function VrmModel({
       vrm.scene.rotation.z = 0;
     }
 
-    // OrbitControlsのminDistanceは「注視点まで」の距離なので、2本指で位置を
-    // ずらすと注視点ごと移動し、モーション中の頭へカメラが入り込めてしまう。
-    // アニメーション後の実際の頭を基準に、どのズーム・回転・位置からでも
-    // 頭の外側にカメラを押し戻す。表示を担当するベースVRMだけで行う。
     if (fitCamera) {
       const head = vrm.humanoid.getRawBoneNode("head");
       if (head) {

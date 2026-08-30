@@ -6,19 +6,20 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { DEFAULT_LOOK } from "./catalog";
+import { applyConversationTransaction, ConversationTransactionLedger } from "./conversation-transaction";
 import { DEFAULT_PERSONA, PRESETS } from "./personas";
-import type { AppState, ChatMessage, Look, Persona, PersonaSave } from "./types";
+import type { AppState, ChatMessage, Look, ModelTurn, Persona, PersonaSave, VoiceSettings } from "./types";
 
 const STORAGE_KEY = "friend-app:v2";
 const SCHEMA_VERSION = 2;
-
-/** 覚えておく要点は増えすぎないよう、直近のものだけ残す */
 const MAX_MEMORIES = 40;
+const DEFAULT_VOICE: VoiceSettings = { enabled: false, autoplay: false };
 
 const INITIAL: AppState = {
   schemaVersion: SCHEMA_VERSION,
@@ -30,19 +31,11 @@ const INITIAL: AppState = {
   messages: [],
   memories: [],
   personas: {},
+  voice: DEFAULT_VOICE,
 };
 
-/**
- * v1の look.outfit -> v2の variantId 対応表。
- * まだVRoidで衣装別のVRMを書き出していないため空。Phase 4で埋める
- */
 const OUTFIT_TO_VARIANT: Record<string, string> = {};
 
-/**
- * v1形式のlookをv2形式へ変換する。
- * v1のhair/eyes/mouthなどVRMで意味を持たない項目は捨て、
- * scene（IDの体系は共通のまま）はそのまま引き継ぐ
- */
 function migrateLook(saved: unknown): Look {
   if (!saved || typeof saved !== "object") return DEFAULT_LOOK;
   const o = saved as Record<string, unknown>;
@@ -73,7 +66,30 @@ function reconcileLook(saved: unknown, schemaVersion: number): Look {
   };
 }
 
-/** 保存済みキャラ1件分。壊れていたら null を返し、丸ごと読み飛ばせるようにする */
+/** optional fieldsだけを加算的に復元し、未知のruntime metadataは保存へ持ち込まない。 */
+function reconcileMessages(saved: unknown): ChatMessage[] {
+  if (!Array.isArray(saved)) return [];
+  const messages: ChatMessage[] = [];
+  for (const value of saved) {
+    if (!value || typeof value !== "object") continue;
+    const raw = value as Record<string, unknown>;
+    if ((raw.role !== "user" && raw.role !== "model") || typeof raw.text !== "string") continue;
+    const at = typeof raw.at === "number" && Number.isFinite(raw.at) ? raw.at : Date.now();
+    messages.push({
+      role: raw.role,
+      text: raw.text,
+      at,
+      ...(typeof raw.narration === "string" && raw.narration.trim()
+        ? { narration: raw.narration.trim().slice(0, 80) }
+        : {}),
+      ...(raw.performance && typeof raw.performance === "object"
+        ? { performance: raw.performance as ChatMessage["performance"] }
+        : {}),
+    });
+  }
+  return messages;
+}
+
 function reconcilePersonaSave(saved: unknown, schemaVersion: number): PersonaSave | null {
   if (!saved || typeof saved !== "object") return null;
   const s = saved as Partial<PersonaSave>;
@@ -82,25 +98,20 @@ function reconcilePersonaSave(saved: unknown, schemaVersion: number): PersonaSav
     persona: { ...DEFAULT_PERSONA, ...s.persona } as Persona,
     look: reconcileLook(s.look, schemaVersion),
     affection: typeof s.affection === "number" ? s.affection : 0,
-    messages: Array.isArray(s.messages) ? (s.messages as ChatMessage[]) : [],
+    messages: reconcileMessages(s.messages),
     memories: Array.isArray(s.memories) ? s.memories.filter((m) => typeof m === "string") : [],
   };
 }
 
-/**
- * 保存済みデータに欠けたキーがあっても壊れないようにする。
- * エクスポートしたJSONの読み込み（v1エクスポートも含む）にも使う
- */
 export function reconcile(saved: unknown): AppState {
   if (!saved || typeof saved !== "object") return INITIAL;
   const s = saved as Partial<AppState>;
-  // v1が書き出したJSONにはschemaVersionが無いので、その場合は1とみなす
   const schemaVersion = typeof s.schemaVersion === "number" ? s.schemaVersion : 1;
   const personas: Record<string, PersonaSave> = {};
   if (s.personas && typeof s.personas === "object") {
-    for (const [id, v] of Object.entries(s.personas as Record<string, unknown>)) {
-      const r = reconcilePersonaSave(v, schemaVersion);
-      if (r) personas[id] = r;
+    for (const [id, value] of Object.entries(s.personas as Record<string, unknown>)) {
+      const reconciled = reconcilePersonaSave(value, schemaVersion);
+      if (reconciled) personas[id] = reconciled;
     }
   }
   return {
@@ -110,26 +121,44 @@ export function reconcile(saved: unknown): AppState {
     persona: { ...DEFAULT_PERSONA, ...(s.persona ?? {}) } as Persona,
     look: reconcileLook(s.look, schemaVersion),
     affection: typeof s.affection === "number" ? s.affection : 0,
-    messages: Array.isArray(s.messages) ? (s.messages as ChatMessage[]) : [],
+    messages: reconcileMessages(s.messages),
     memories: Array.isArray(s.memories) ? s.memories.filter((m) => typeof m === "string") : [],
     personas,
+    voice: {
+      enabled: s.voice?.enabled === true,
+      autoplay: s.voice?.autoplay === true,
+    },
   };
+}
+
+export interface ModelTurnCommitAck {
+  turnId: string;
+  personaId: string;
+  messageIndex: number;
+}
+
+interface RuntimeState {
+  app: AppState;
+  /** session-only。localStorageへは保存しない。transactionが実際にstateへ適用された証跡。 */
+  commitAck: ModelTurnCommitAck | null;
 }
 
 interface StoreValue {
   state: AppState;
-  /** localStorage からの読み込みが終わったか */
   ready: boolean;
+  commitAck: ModelTurnCommitAck | null;
   update: (patch: Partial<AppState>) => void;
   setLook: (patch: Partial<Look>) => void;
   setPersona: (patch: Partial<Persona>) => void;
-  addMessage: (m: ChatMessage) => void;
-  /** 直近の model メッセージを置き換える（ストリーミング用） */
+  addMessage: (message: ChatMessage) => void;
+  /** legacy互換。新しいchat streaming draftからは使用禁止。 */
   replaceLastModel: (text: string) => void;
-  gainAffection: (n: number) => void;
-  /** 会話から覚えた要点を1つ追加する。増えすぎたら古いものから消える */
+  gainAffection: (amount: number) => void;
   addMemory: (text: string) => void;
-  /** 覚えた要点を1つ消す */
+  /** turn_complete専用。model/memory/affectionとsession-only ackを同じstate transitionで確定する。 */
+  commitModelTurn: (turnId: string, expectedPersonaId: string, turn: ModelTurn) => void;
+  clearCommitAck: (turnId: string) => void;
+  setVoiceSettings: (patch: Partial<VoiceSettings>) => void;
   removeMemory: (index: number) => void;
   applyPreset: (presetId: string) => void;
   clearMessages: () => void;
@@ -138,128 +167,196 @@ interface StoreValue {
 
 const StoreContext = createContext<StoreValue | null>(null);
 
-/** localStorage から読み込む。サーバー側では実行されない */
 function loadState(): AppState {
   if (typeof window === "undefined") return INITIAL;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? reconcile(JSON.parse(raw)) : INITIAL;
   } catch {
-    // 壊れたデータは無視して初期値のまま進む
     return INITIAL;
   }
 }
 
-/* ハイドレーションが済んだかを知るための最小限のストア。
-   サーバーでは false、クライアントに渡ったあとは true を返す。 */
 const neverChanges = () => () => {};
 const onClient = () => true;
 const onServer = () => false;
 
 export function AppStateProvider({ children }: { children: ReactNode }) {
-  // 初回描画で localStorage を読む。サーバーとの描画のズレは
-  // ready が false のあいだ各画面が待つことで防いでいる
-  const [state, setState] = useState<AppState>(loadState);
+  const [runtime, setRuntime] = useState<RuntimeState>(() => ({ app: loadState(), commitAck: null }));
+  const state = runtime.app;
+  const stateRef = useRef(state);
+  const transactionLedger = useRef(new ConversationTransactionLedger());
   const ready = useSyncExternalStore(neverChanges, onClient, onServer);
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   useEffect(() => {
     if (!ready) return;
     try {
+      // runtime.commitAckはsession-onlyなので永続化しない。
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch {
-      // 容量超過などは黙って諦める（会話は続けられる）
+      // 容量超過でも会話は継続する。
     }
   }, [state, ready]);
 
   const update = useCallback((patch: Partial<AppState>) => {
-    setState((s) => ({ ...s, ...patch }));
+    setRuntime((current) => ({ ...current, app: { ...current.app, ...patch } }));
   }, []);
 
   const setLook = useCallback((patch: Partial<Look>) => {
-    setState((s) => ({ ...s, look: { ...s.look, ...patch } }));
+    setRuntime((current) => ({
+      ...current,
+      app: { ...current.app, look: { ...current.app.look, ...patch } },
+    }));
   }, []);
 
   const setPersona = useCallback((patch: Partial<Persona>) => {
-    setState((s) => ({ ...s, persona: { ...s.persona, ...patch } }));
+    setRuntime((current) => ({
+      ...current,
+      app: { ...current.app, persona: { ...current.app.persona, ...patch } },
+    }));
   }, []);
 
-  const addMessage = useCallback((m: ChatMessage) => {
-    setState((s) => ({ ...s, messages: [...s.messages, m] }));
+  const addMessage = useCallback((message: ChatMessage) => {
+    setRuntime((current) => ({
+      ...current,
+      app: { ...current.app, messages: [...current.app.messages, message] },
+    }));
   }, []);
 
   const replaceLastModel = useCallback((text: string) => {
-    setState((s) => {
-      const messages = [...s.messages];
-      for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].role === "model") {
-          messages[i] = { ...messages[i], text };
+    setRuntime((current) => {
+      const messages = [...current.app.messages];
+      for (let index = messages.length - 1; index >= 0; index -= 1) {
+        if (messages[index].role === "model") {
+          messages[index] = { ...messages[index], text };
           break;
         }
       }
-      return { ...s, messages };
+      return { ...current, app: { ...current.app, messages } };
     });
   }, []);
 
-  const gainAffection = useCallback((n: number) => {
-    setState((s) => ({ ...s, affection: s.affection + n }));
+  const gainAffection = useCallback((amount: number) => {
+    setRuntime((current) => ({
+      ...current,
+      app: { ...current.app, affection: current.app.affection + amount },
+    }));
   }, []);
 
   const addMemory = useCallback((text: string) => {
     const trimmed = text.trim();
     if (!trimmed) return;
-    setState((s) => {
-      // 同じ内容の覚え直しで無限に増えないようにする
-      const rest = s.memories.filter((m) => m !== trimmed);
-      const memories = [...rest, trimmed].slice(-MAX_MEMORIES);
-      return { ...s, memories };
+    setRuntime((current) => {
+      const rest = current.app.memories.filter((memory) => memory !== trimmed);
+      return {
+        ...current,
+        app: { ...current.app, memories: [...rest, trimmed].slice(-MAX_MEMORIES) },
+      };
     });
   }, []);
 
+  const commitModelTurn = useCallback(
+    (turnId: string, expectedPersonaId: string, turn: ModelTurn): void => {
+      const current = stateRef.current;
+      if (
+        current.persona.id !== expectedPersonaId ||
+        !transactionLedger.current.accept(turnId)
+      ) {
+        return;
+      }
+
+      setRuntime((snapshot) => {
+        if (snapshot.app.persona.id !== expectedPersonaId) {
+          transactionLedger.current.release(turnId);
+          return snapshot;
+        }
+        const app = applyConversationTransaction(snapshot.app, turn);
+        return {
+          app,
+          commitAck: {
+            turnId,
+            personaId: expectedPersonaId,
+            messageIndex: app.messages.length - 1,
+          },
+        };
+      });
+    },
+    [],
+  );
+
+  const clearCommitAck = useCallback((turnId: string) => {
+    setRuntime((current) =>
+      current.commitAck?.turnId === turnId ? { ...current, commitAck: null } : current,
+    );
+  }, []);
+
+  const setVoiceSettings = useCallback((patch: Partial<VoiceSettings>) => {
+    setRuntime((current) => ({
+      ...current,
+      app: { ...current.app, voice: { ...current.app.voice, ...patch } },
+    }));
+  }, []);
+
   const removeMemory = useCallback((index: number) => {
-    setState((s) => ({ ...s, memories: s.memories.filter((_, i) => i !== index) }));
+    setRuntime((current) => ({
+      ...current,
+      app: {
+        ...current.app,
+        memories: current.app.memories.filter((_, memoryIndex) => memoryIndex !== index),
+      },
+    }));
   }, []);
 
   const applyPreset = useCallback((presetId: string) => {
-    const preset = PRESETS.find((p) => p.persona.id === presetId);
+    const preset = PRESETS.find((candidate) => candidate.persona.id === presetId);
     if (!preset) return;
-    setState((s) => {
-      if (presetId === s.persona.id) return s;
-      // 今のキャラの会話・好感度・記憶・見た目をしまってから切り替える
+    setRuntime((runtimeSnapshot) => {
+      const current = runtimeSnapshot.app;
+      if (presetId === current.persona.id) return runtimeSnapshot;
       const personas: Record<string, PersonaSave> = {
-        ...s.personas,
-        [s.persona.id]: {
-          persona: s.persona,
-          look: s.look,
-          affection: s.affection,
-          messages: s.messages,
-          memories: s.memories,
+        ...current.personas,
+        [current.persona.id]: {
+          persona: current.persona,
+          look: current.look,
+          affection: current.affection,
+          messages: current.messages,
+          memories: current.memories,
         },
       };
       const saved = personas[presetId];
       return {
-        ...s,
-        persona: saved ? saved.persona : preset.persona,
-        look: saved ? saved.look : preset.look,
-        affection: saved ? saved.affection : 0,
-        messages: saved ? saved.messages : [],
-        memories: saved ? saved.memories : [],
-        personas,
+        ...runtimeSnapshot,
+        app: {
+          ...current,
+          persona: saved ? saved.persona : preset.persona,
+          look: saved ? saved.look : preset.look,
+          affection: saved ? saved.affection : 0,
+          messages: saved ? saved.messages : [],
+          memories: saved ? saved.memories : [],
+          personas,
+        },
       };
     });
   }, []);
 
   const clearMessages = useCallback(() => {
-    setState((s) => ({ ...s, messages: [] }));
+    setRuntime((current) => ({ ...current, app: { ...current.app, messages: [] } }));
   }, []);
 
   const resetAll = useCallback(() => {
-    setState(INITIAL);
+    transactionLedger.current.clear();
+    setRuntime({ app: INITIAL, commitAck: null });
   }, []);
 
   const value = useMemo<StoreValue>(
     () => ({
       state,
       ready,
+      commitAck: runtime.commitAck,
       update,
       setLook,
       setPersona,
@@ -267,6 +364,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       replaceLastModel,
       gainAffection,
       addMemory,
+      commitModelTurn,
+      clearCommitAck,
+      setVoiceSettings,
       removeMemory,
       applyPreset,
       clearMessages,
@@ -275,6 +375,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [
       state,
       ready,
+      runtime.commitAck,
       update,
       setLook,
       setPersona,
@@ -282,6 +383,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       replaceLastModel,
       gainAffection,
       addMemory,
+      commitModelTurn,
+      clearCommitAck,
+      setVoiceSettings,
       removeMemory,
       applyPreset,
       clearMessages,
@@ -293,7 +397,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 }
 
 export function useStore(): StoreValue {
-  const ctx = useContext(StoreContext);
-  if (!ctx) throw new Error("useStore は AppStateProvider の中でしか使えません");
-  return ctx;
+  const context = useContext(StoreContext);
+  if (!context) throw new Error("useStore は AppStateProvider の中でしか使えません");
+  return context;
 }

@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { CharacterStage } from "@/components/character/CharacterStage";
 import { AFFECTION_LEVELS, affectionLevel, affectionProgress } from "@/lib/catalog";
 import type { Expression } from "@/lib/expressions";
-import type { Look } from "@/lib/types";
+import type { Look, ModelPerformanceIntent } from "@/lib/types";
 
 /** 背景シーン＋キャラ。子要素はその上に重なる */
 export function Stage({
@@ -15,6 +15,8 @@ export function Stage({
   dim = 0,
   expression = "normal",
   talking = false,
+  lipSync = 0,
+  performance,
   lift = 0,
 }: {
   look: Look;
@@ -23,6 +25,8 @@ export function Stage({
   dim?: number;
   expression?: Expression;
   talking?: boolean;
+  lipSync?: number;
+  performance?: Partial<ModelPerformanceIntent>;
   /** キャラを下から持ち上げる量(px)。下の帯に脚が隠れすぎるのを防ぐ */
   lift?: number;
 }) {
@@ -33,6 +37,8 @@ export function Stage({
         personaId={personaId}
         expression={expression}
         talking={talking}
+        lipSync={lipSync}
+        performance={performance}
         lift={lift}
       />
       {dim > 0 && (

@@ -1,9 +1,9 @@
 # friend-app-v2 情緒表現・自然音声アーキテクチャ設計
 
-Status: **DESIGN APPROVED PENDING PHASE 0 PoC**  
+Status: **IMPLEMENTED (Aivis provider configuration remains intentionally blocked)**
 Target repository: `syoudai0514/friend-app-v2`  
 Reviewed against current `main`: 2026-08-30  
-Scope: **設計のみ。Phase 0 Technical PoC がPASSするまで本実装へ進まない。**
+Scope: Phase 0〜6の安全境界・UI・runtime構造。Phase 7（文単位speculative TTS / phoneme / viseme）は対象外。
 
 ---
 

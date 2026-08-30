@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "target": "ES2022",
+    "outDir": ".test-dist",
+    "noEmit": false,
+    "incremental": false,
+    "jsx": "react-jsx"
+  },
+  "include": ["tests/**/*.ts"],
+  "exclude": ["node_modules"]
+}

@@ -5,6 +5,7 @@ import { Canvas } from "@react-three/fiber";
 import { useCallback, useState, type RefObject } from "react";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import type { Expression } from "@/lib/expressions";
+import type { ModelPerformanceIntent } from "@/lib/types";
 import type { StageViewState } from "./stage-view";
 import { VrmModel, type ModelBounds } from "./VrmModel";
 
@@ -23,6 +24,8 @@ function AppearanceLayers({
   motionUrl,
   expression,
   talking,
+  lipSync,
+  performance,
   reducedMotion,
   orbitControlsRef,
   onReady,
@@ -42,6 +45,8 @@ function AppearanceLayers({
   motionUrl: string;
   expression: Expression;
   talking: boolean;
+  lipSync: number;
+  performance?: Partial<ModelPerformanceIntent>;
   reducedMotion: boolean;
   orbitControlsRef: RefObject<OrbitControlsImpl | null>;
   onReady?: () => void;
@@ -85,6 +90,8 @@ function AppearanceLayers({
         motionUrl={motionUrl}
         expression={expression}
         talking={talking}
+        lipSync={lipSync}
+        performance={performance}
         reducedMotion={reducedMotion}
         orbitControlsRef={orbitControlsRef}
         hideClothes={hasOutfit && outfitReady}
@@ -106,6 +113,7 @@ function AppearanceLayers({
           motionUrl={motionUrl}
           expression="normal"
           talking={false}
+          lipSync={0}
           reducedMotion={reducedMotion}
           orbitControlsRef={orbitControlsRef}
           materialMode="bodyAndClothes"
@@ -125,6 +133,7 @@ function AppearanceLayers({
           motionUrl={motionUrl}
           expression="normal"
           talking={false}
+          lipSync={0}
           reducedMotion={reducedMotion}
           orbitControlsRef={orbitControlsRef}
           materialMode="onlyHair"
@@ -157,6 +166,8 @@ export function VrmCanvas({
   motionUrl,
   expression,
   talking,
+  lipSync,
+  performance,
   reducedMotion,
   orbitControlsRef,
   onReady,
@@ -176,6 +187,8 @@ export function VrmCanvas({
   motionUrl: string;
   expression: Expression;
   talking: boolean;
+  lipSync: number;
+  performance?: Partial<ModelPerformanceIntent>;
   reducedMotion: boolean;
   orbitControlsRef: RefObject<OrbitControlsImpl | null>;
   onReady?: () => void;
@@ -235,6 +248,8 @@ export function VrmCanvas({
         motionUrl={motionUrl}
         expression={expression}
         talking={talking}
+        lipSync={lipSync}
+        performance={performance}
         reducedMotion={reducedMotion}
         orbitControlsRef={orbitControlsRef}
         initialView={initialView}

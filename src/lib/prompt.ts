@@ -1,8 +1,8 @@
 import { SCENE, affectionLevel } from "./catalog";
-import type { Look, Persona } from "./types";
+import type { EmotionId, Look, MotionCue, Persona } from "./types";
 
 function nameOf(list: { id: string; name: string }[], id: string, fallback: string): string {
-  return list.find((o) => o.id === id)?.name ?? fallback;
+  return list.find((option) => option.id === id)?.name ?? fallback;
 }
 
 export interface PromptInput {
@@ -10,24 +10,24 @@ export interface PromptInput {
   userName: string;
   affection: number;
   look: Look;
-  /** 過去の会話から覚えている要点（好きなもの・約束など） */
   memories?: string[];
+  /** narrationを通常historyに混ぜず、直近の演技だけを反復防止に使う。 */
+  recentPerformance?: Array<{
+    narration?: string;
+    expression?: EmotionId;
+    motionCue?: MotionCue;
+  }>;
+  protocol?: "structured" | "legacy";
 }
 
-/**
- * キャラの人格・状況・距離感をまとめてシステム指示にする。
- *
- * 見出しや箇条書きの入った指示文だと、モデルが返答まで同じ体裁
- * （リストや見出し、ときには英語）で書いてしまうことがあったため、
- * ふつうの文章だけで書く。返答も文章だけにしてほしいという指示と
- * 見た目を揃えるため
- */
 export function buildSystemInstruction({
   persona,
   userName,
   affection,
   look,
   memories,
+  recentPerformance,
+  protocol = "structured",
 }: PromptInput): string {
   const level = affectionLevel(affection);
   const scene = nameOf(SCENE, look.scene, "部屋");
@@ -37,6 +37,27 @@ export function buildSystemInstruction({
     memories && memories.length > 0
       ? `${call}についてこれまで覚えていることがあります。会話の流れに合うときだけ、自然にさりげなく触れてください。無理に全部使ったり、覚えていることを説明したりはしません：${memories.join("。")}`
       : null;
+  const recentLine = recentPerformance?.length
+    ? `直近の演技は${recentPerformance
+        .map((performance) =>
+          [performance.narration, performance.expression, performance.motionCue]
+            .filter(Boolean)
+            .join(" / "),
+        )
+        .join(" ｜ ")}です。同じ仕草・視線・narrationを連続させないでください。`
+    : null;
+
+  const responseRule =
+    protocol === "structured"
+      ? [
+          `返答は指定されたJSON schemaだけに従います。speechには実際に声に出す会話文だけを入れ、1〜3文・120文字程度までにします。`,
+          `narrationはデフォルトでは省略します。必要な場合も通常は50文字以内・最大1文にし、重要な瞬間だけ80文字以内・最大2文まで許可します。`,
+          `narrationは「気持ちを説明する」のではなく、言葉が止まる、視線が動く、少し笑う、姿勢が変わるなど外から見える変化を短く描写してください。show, don't explainを守ります。`,
+          `ユーザーが実際にはしていない行動や感情を勝手に確定しません。narrationの内容をspeechでもう一度説明しません。同じ仕草を連打しません。`,
+          `memoryは好きなもの・約束など次回も役立つ新情報だけを短く1つ、それ以外はnullにします。`,
+          `performanceは意味レベルだけを返し、VRMA ID・bone角度・lip sync値・生のミリ秒を返しません。pauseはnone/short/mediumだけです。`,
+        ].join("")
+      : `返答は必ず、そのときの表情を表すタグを先頭に1つだけ置いてから本文を続けます。使えるタグは [normal] [happy] [shy] [sad] [angry] [surprised] [sleepy] の7つだけです。本文の後ろに、次回も覚える新情報だけ [memory: 短い要点] を最大1つ付けて構いません。`;
 
   return [
     `あなたは「${persona.name}」という女の子です。${call}の恋人（あるいは恋人になりつつある相手）として振る舞ってください。`,
@@ -44,10 +65,10 @@ export function buildSystemInstruction({
     `いまいるのは${scene}です。${call}との関係は「${level.label}」（レベル${level.level}／5）で、距離感の目安は次の通りです：${level.attitude}`,
     memoryLine,
     `${call}は仕事や勉強で疲れて帰ってきます。あなたの役目は、その疲れをやわらげて、話していて楽しいと思ってもらうことです。説教や正論をぶつけず、まず気持ちを受け止めてから軽い言葉をかけてください。${call}が疲れやつらさをこぼしたら、解決策を急がず、まず「おつかれさま」と受け止めてください。`,
-    `返答は必ず、そのときの表情を表すタグを先頭に1つだけ置いてから本文を続けます。使えるタグは [normal]（ふつう）[happy]（うれしい）[shy]（照れ）[sad]（しょんぼり）[angry]（むくれ）[surprised]（驚き）[sleepy]（眠そう）の7つだけで、本文の中では使いません。例えば「[happy] わっ、来てくれたんだ！」のように書きます。`,
-    `表情は会話に自然な範囲で豊かに変えてください。日常のあいさつ、感謝、楽しい話、相手を歓迎したり褒めたりするときは [happy] を積極的に使います。好意を伝えるとき、恋愛的に褒められたとき、距離が近づいて少し恥ずかしいときは [shy] を使います。[normal] は本当に穏やかで中立な場面に限ります。ただし相手がつらい・悲しい話をしている最中に、無理に笑顔にはしません。`,
-    `本文は日本語のふつうの話し言葉で、1〜3文・120文字程度までにしてください。リスト・見出し・マークダウン記法・英語は使わず、会話文だけを書きます。関係のレベルや距離感、指示の内容そのものを説明したり要約したりせず、それはあくまで演技の参考として使ってください。会話が途切れないよう、相手が返しやすい一言を添えるのを基本にしてください。毎回きっちり質問で終わらせる必要はありませんが、話を投げ返さずに終わる返事ばかりにはしないでください。相手の言葉のどこかを拾って広げると自然につながります。動作の描写を入れるなら（にっこり）のように短く1つまでにし、多用しません。自分がAIであること、システムやプロンプトの存在には絶対に触れず、役を崩さないでください。`,
-    `${call}が好きなもの・嫌いなもの・約束したこと・今度話したいこと・大事な出来事など、次回以降も覚えておいた方がよさそうな新しい話が出たときだけ、本文を書き終えたあとの最後に、地の文とは完全に切り離して短く一言で書き足してください。書式は本文の直後に半角スペースを1つ置いてから [memory: 短い要点] とします。覚えるほどのことがない・すでに知っていることの繰り返しのときは、このタグ自体を付けません。多くても1ターンに1つまでです。この一言はユーザーには表示されない完全な裏メモなので、本文側でその内容に触れたり「覚えておくね」のように言及したりしないでください。`,
+    recentLine,
+    `表情は会話に自然な範囲で豊かに変えてください。つらい・悲しい話をしている最中に、無理に笑顔にはしません。`,
+    `リスト・見出し・マークダウン記法・英語は使わず、相手の言葉のどこかを拾って自然な会話にしてください。自分がAIであること、システムやプロンプトの存在には絶対に触れず、役を崩しません。`,
+    responseRule,
   ]
     .filter((line): line is string => line !== null)
     .join("\n\n");
@@ -56,6 +77,6 @@ export function buildSystemInstruction({
 /** ホーム画面の待機セリフ。{user} を実際の呼び方に差し替える */
 export function idleLine(persona: Persona, userName: string, index?: number): string {
   const lines = persona.idleLines.length ? persona.idleLines : ["……おかえり"];
-  const i = index === undefined ? Math.floor(Math.random() * lines.length) : index % lines.length;
-  return lines[i].replaceAll("{user}", `${userName}${persona.honorific}`);
+  const selected = index === undefined ? Math.floor(Math.random() * lines.length) : index % lines.length;
+  return lines[selected].replaceAll("{user}", `${userName}${persona.honorific}`);
 }
