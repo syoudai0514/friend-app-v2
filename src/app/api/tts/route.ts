@@ -1,3 +1,4 @@
+import { geminiTtsPrompt, geminiTtsVoice, pcm16MonoToWav } from "@/lib/gemini-tts";
 import { ttsTextNormalizer, validTtsRequest, type TtsRequestBody, type VoiceProfile } from "@/lib/voice";
 import {
   approvedFallbackFor,
@@ -10,6 +11,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const AIVIS_SYNTHESIZE_URL = "https://api.aivis-project.com/v1/tts/synthesize";
+const DEFAULT_GEMINI_TTS_MODEL = "gemini-3.1-flash-tts-preview";
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -57,6 +59,81 @@ async function synthesizeAivis(
   });
 }
 
+interface GeminiInlineData {
+  data?: string;
+  mimeType?: string;
+}
+
+interface GeminiTtsResponse {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{
+        inlineData?: GeminiInlineData;
+      }>;
+    };
+  }>;
+}
+
+async function synthesizeGemini(
+  input: TtsRequestBody,
+  normalizedSpeech: string,
+  apiKey: string,
+  signal: AbortSignal,
+): Promise<Response | null> {
+  const model = process.env.GEMINI_TTS_MODEL?.trim() || DEFAULT_GEMINI_TTS_MODEL;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "x-goog-api-key": apiKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: geminiTtsPrompt(input, normalizedSpeech) }] }],
+      generationConfig: {
+        responseModalities: ["AUDIO"],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: {
+              voiceName: geminiTtsVoice(input.personaId),
+            },
+          },
+        },
+      },
+    }),
+    signal,
+    cache: "no-store",
+  });
+  if (!response.ok) return null;
+
+  let payload: GeminiTtsResponse;
+  try {
+    payload = await response.json() as GeminiTtsResponse;
+  } catch {
+    return null;
+  }
+  const part = payload.candidates?.[0]?.content?.parts?.find((candidate) => candidate.inlineData?.data);
+  const encoded = part?.inlineData?.data;
+  if (!encoded) return null;
+
+  const decoded = Buffer.from(encoded, "base64");
+  if (!decoded.byteLength) return null;
+  const raw = new Uint8Array(decoded.buffer, decoded.byteOffset, decoded.byteLength);
+  const mimeType = part?.inlineData?.mimeType?.toLowerCase() ?? "";
+  const audio = mimeType.includes("wav") ? raw : pcm16MonoToWav(raw);
+  const bytes = audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength) as ArrayBuffer;
+
+  return new Response(bytes, {
+    status: 200,
+    headers: {
+      "Content-Type": mimeType.includes("wav") ? "audio/wav" : "audio/wav",
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+      "X-TTS-Provider": "gemini",
+    },
+  });
+}
+
 function metadataLog(
   requestId: string,
   profile: VoiceProfile | null,
@@ -64,11 +141,12 @@ function metadataLog(
   characterCount: number,
   started: number,
   status: string,
+  providerOverride?: string,
 ) {
   // speech本文は絶対にlogしない。
   console.info(JSON.stringify({
     requestId,
-    provider: profile?.provider ?? "none",
+    provider: providerOverride ?? profile?.provider ?? "none",
     personaId,
     characterCount,
     latencyMs: Date.now() - started,
@@ -86,6 +164,8 @@ export async function GET() {
 /**
  * TTS privacy boundary。受理する会話本文はcanonical model speech 1本だけ。
  * user message / narration / memory / prompt / recentPerformanceを含むrequestはvalidatorで拒否する。
+ * Aivisの承認済みprofileがあれば優先し、未設定/未承認/障害時は既存GEMINI_API_KEYで
+ * Google prebuilt voiceへfallbackする。Aivisのライセンスgate自体は迂回しない。
  */
 export async function POST(req: Request) {
   const requestId = crypto.randomUUID();
@@ -99,60 +179,87 @@ export async function POST(req: Request) {
   const input = validTtsRequest(body);
   if (!input) return Response.json({ code: "invalid_request" }, { status: 400 });
 
-  const configured = serverVoiceProfiles()[input.personaId];
-  const profile = approvedVoiceFor(input.personaId);
-  if (!profile) {
-    metadataLog(requestId, configured ?? null, input.personaId, input.speech.length, started, configured?.voiceId ? "license_not_approved" : "voice_unconfigured");
-    return Response.json(
-      { code: configured?.voiceId ? "voice_not_approved" : "voice_unconfigured" },
-      { status: 409, headers: { "Cache-Control": "private, no-store" } },
-    );
-  }
-
-  const apiKey = process.env.AIVIS_API_KEY?.trim();
-  if (!apiKey) {
-    metadataLog(requestId, profile, input.personaId, input.speech.length, started, "api_key_missing");
-    return Response.json({ code: "aivis_api_key_missing" }, { status: 503 });
-  }
-
   const normalizedSpeech = ttsTextNormalizer(input.speech);
   if (!normalizedSpeech) return Response.json({ code: "empty_speech" }, { status: 400 });
 
-  const candidates = [profile];
-  const fallback = approvedFallbackFor(profile);
-  if (fallback && fallback.voiceProfileId !== profile.voiceProfileId) candidates.push(fallback);
+  const configured = serverVoiceProfiles()[input.personaId];
+  const profile = approvedVoiceFor(input.personaId);
+  const aivisApiKey = process.env.AIVIS_API_KEY?.trim();
 
-  for (const candidate of candidates) {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        const response = await synthesizeAivis(candidate, input, normalizedSpeech, apiKey, req.signal);
-        if (response.ok) {
-          const bytes = await response.arrayBuffer();
-          if (!bytes.byteLength) break;
-          metadataLog(requestId, candidate, input.personaId, normalizedSpeech.length, started, "ok");
-          return new Response(bytes, {
-            status: 200,
-            headers: {
-              "Content-Type": response.headers.get("content-type") || "audio/mpeg",
-              "Cache-Control": "private, no-store",
-              "X-Content-Type-Options": "nosniff",
-            },
-          });
-        }
-        const retryable = response.status === 429 || response.status >= 500;
-        if (!retryable) break;
-      } catch (error) {
-        if (req.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) {
-          metadataLog(requestId, candidate, input.personaId, normalizedSpeech.length, started, "aborted");
-          return new Response(null, { status: 499 });
+  if (profile && aivisApiKey) {
+    const candidates = [profile];
+    const fallback = approvedFallbackFor(profile);
+    if (fallback && fallback.voiceProfileId !== profile.voiceProfileId) candidates.push(fallback);
+
+    for (const candidate of candidates) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const response = await synthesizeAivis(candidate, input, normalizedSpeech, aivisApiKey, req.signal);
+          if (response.ok) {
+            const bytes = await response.arrayBuffer();
+            if (!bytes.byteLength) break;
+            metadataLog(requestId, candidate, input.personaId, normalizedSpeech.length, started, "ok");
+            return new Response(bytes, {
+              status: 200,
+              headers: {
+                "Content-Type": response.headers.get("content-type") || "audio/mpeg",
+                "Cache-Control": "private, no-store",
+                "X-Content-Type-Options": "nosniff",
+                "X-TTS-Provider": "aivis",
+              },
+            });
+          }
+          const retryable = response.status === 429 || response.status >= 500;
+          if (!retryable) break;
+        } catch (error) {
+          if (req.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) {
+            metadataLog(requestId, candidate, input.personaId, normalizedSpeech.length, started, "aborted");
+            return new Response(null, { status: 499 });
+          }
         }
       }
     }
+    metadataLog(requestId, profile, input.personaId, normalizedSpeech.length, started, "aivis_unavailable_fallback");
+  } else if (profile && !aivisApiKey) {
+    metadataLog(requestId, profile, input.personaId, normalizedSpeech.length, started, "aivis_api_key_missing_fallback");
+  } else {
+    metadataLog(
+      requestId,
+      configured ?? null,
+      input.personaId,
+      normalizedSpeech.length,
+      started,
+      configured?.voiceId ? "aivis_license_not_approved_fallback" : "aivis_unconfigured_fallback",
+    );
   }
 
-  metadataLog(requestId, profile, input.personaId, normalizedSpeech.length, started, "provider_error");
-  return Response.json({ code: "tts_unavailable" }, {
-    status: 503,
-    headers: { "Cache-Control": "private, no-store" },
-  });
+  const geminiApiKey = process.env.GEMINI_API_KEY?.trim();
+  if (geminiApiKey) {
+    try {
+      const response = await synthesizeGemini(input, normalizedSpeech, geminiApiKey, req.signal);
+      if (response) {
+        metadataLog(requestId, null, input.personaId, normalizedSpeech.length, started, "ok", "gemini");
+        return response;
+      }
+    } catch (error) {
+      if (req.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) {
+        metadataLog(requestId, null, input.personaId, normalizedSpeech.length, started, "aborted", "gemini");
+        return new Response(null, { status: 499 });
+      }
+    }
+    metadataLog(requestId, null, input.personaId, normalizedSpeech.length, started, "provider_error", "gemini");
+    return Response.json({ code: "tts_unavailable" }, {
+      status: 503,
+      headers: { "Cache-Control": "private, no-store" },
+    });
+  }
+
+  metadataLog(requestId, null, input.personaId, normalizedSpeech.length, started, "gemini_api_key_missing", "gemini");
+  return Response.json(
+    { code: profile ? "tts_unavailable" : configured?.voiceId ? "voice_not_approved" : "voice_unconfigured" },
+    {
+      status: profile ? 503 : 409,
+      headers: { "Cache-Control": "private, no-store" },
+    },
+  );
 }

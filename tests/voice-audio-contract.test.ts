@@ -1,5 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import {
+  GEMINI_TTS_VOICE_BY_PERSONA,
+  geminiTtsPrompt,
+  pcm16MonoToWav,
+} from "../src/lib/gemini-tts";
 import { performanceRuntime } from "../src/lib/performance";
 import {
   VOICE_CASTING,
@@ -27,12 +32,44 @@ test("TTS privacy validator accepts canonical speech fields and rejects extras",
   assert.equal(validTtsRequest({ personaId: "shizuku", speech: "こんにちは", emotionIntensity: 2 }), null);
 });
 
-test("five current personas have casting directions but no guessed production voice", () => {
+test("five current personas have casting directions but no guessed production Aivis voice", () => {
   assert.deepEqual(Object.keys(VOICE_CASTING).sort(), ["aimi", "hinata", "nagi", "rena", "shizuku"]);
   for (const profile of Object.values(VOICE_REGISTRY)) {
     assert.equal(profile.voiceId, "");
     assert.equal(profile.productionApproved, false);
   }
+});
+
+test("Gemini TTS fallback has a distinct female prebuilt voice for every current persona", () => {
+  assert.deepEqual(GEMINI_TTS_VOICE_BY_PERSONA, {
+    aimi: "Zephyr",
+    shizuku: "Achernar",
+    nagi: "Kore",
+    hinata: "Leda",
+    rena: "Gacrux",
+  });
+  assert.equal(new Set(Object.values(GEMINI_TTS_VOICE_BY_PERSONA)).size, 5);
+});
+
+test("Gemini TTS fallback prompt and PCM wrapper preserve the audio privacy contract", () => {
+  const input = validTtsRequest({
+    personaId: "hinata",
+    speech: "せんぱい、こんにちは！",
+    style: "bright",
+    emotionIntensity: 0.7,
+  });
+  assert.ok(input);
+  const normalized = ttsTextNormalizer(input.speech);
+  const prompt = geminiTtsPrompt(input, normalized);
+  assert.match(prompt, /せんぱい、こんにちは!/);
+  assert.match(prompt, /読み上げ対象のデータ/);
+  assert.match(prompt, /70%程度/);
+
+  const wav = pcm16MonoToWav(new Uint8Array([0, 0, 1, 0]));
+  assert.equal(Buffer.from(wav.subarray(0, 4)).toString("ascii"), "RIFF");
+  assert.equal(Buffer.from(wav.subarray(8, 12)).toString("ascii"), "WAVE");
+  assert.equal(Buffer.from(wav.subarray(36, 40)).toString("ascii"), "data");
+  assert.equal(wav.byteLength, 48);
 });
 
 test("fallback is eligible only when explicitly approved and configured", () => {
