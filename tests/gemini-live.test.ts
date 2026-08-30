@@ -13,9 +13,9 @@ const persona = {
 };
 
 const look = {
-  hair: "default",
-  outfit: "default",
+  variantId: "default",
   scene: "classroom",
+  motionId: "idle",
 };
 
 test("live protocol asks for spoken dialogue only", () => {
