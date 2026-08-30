@@ -12,6 +12,7 @@ export const dynamic = "force-dynamic";
 
 const AIVIS_SYNTHESIZE_URL = "https://api.aivis-project.com/v1/tts/synthesize";
 const DEFAULT_GEMINI_TTS_MODEL = "gemini-3.1-flash-tts-preview";
+const DEFAULT_GEMINI_TTS_FALLBACK_MODEL = "gemini-2.5-flash-preview-tts";
 const GEMINI_TTS_MAX_ATTEMPTS = 2;
 const GEMINI_TTS_RETRY_DELAY_MS = 300;
 
@@ -80,6 +81,15 @@ function retryableGeminiStatus(status: number): boolean {
   return status === 408 || status === 429 || status >= 500;
 }
 
+function geminiTtsModels(): string[] {
+  const configured = process.env.GEMINI_TTS_MODEL?.trim();
+  const configuredFallback = process.env.GEMINI_TTS_FALLBACK_MODEL?.trim();
+  return Array.from(new Set([
+    configured || DEFAULT_GEMINI_TTS_MODEL,
+    configuredFallback || DEFAULT_GEMINI_TTS_FALLBACK_MODEL,
+  ].filter(Boolean)));
+}
+
 async function retryDelay(attempt: number, signal: AbortSignal): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     if (signal.aborted) {
@@ -99,16 +109,17 @@ async function retryDelay(attempt: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-async function synthesizeGemini(
+async function synthesizeGeminiModel(
   input: TtsRequestBody,
   normalizedSpeech: string,
   apiKey: string,
   signal: AbortSignal,
+  model: string,
+  maxAttempts: number,
 ): Promise<Response | null> {
-  const model = process.env.GEMINI_TTS_MODEL?.trim() || DEFAULT_GEMINI_TTS_MODEL;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
-  for (let attempt = 1; attempt <= GEMINI_TTS_MAX_ATTEMPTS; attempt += 1) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     let response: Response;
     try {
       response = await fetch(url, {
@@ -135,15 +146,15 @@ async function synthesizeGemini(
       });
     } catch (error) {
       if (signal.aborted || (error instanceof DOMException && error.name === "AbortError")) throw error;
-      if (attempt < GEMINI_TTS_MAX_ATTEMPTS) {
+      if (attempt < maxAttempts) {
         await retryDelay(attempt, signal);
         continue;
       }
-      throw error;
+      return null;
     }
 
     if (!response.ok) {
-      if (retryableGeminiStatus(response.status) && attempt < GEMINI_TTS_MAX_ATTEMPTS) {
+      if (retryableGeminiStatus(response.status) && attempt < maxAttempts) {
         await retryDelay(attempt, signal);
         continue;
       }
@@ -154,7 +165,7 @@ async function synthesizeGemini(
     try {
       payload = await response.json() as GeminiTtsResponse;
     } catch {
-      if (attempt < GEMINI_TTS_MAX_ATTEMPTS) {
+      if (attempt < maxAttempts) {
         await retryDelay(attempt, signal);
         continue;
       }
@@ -163,7 +174,7 @@ async function synthesizeGemini(
     const part = payload.candidates?.[0]?.content?.parts?.find((candidate) => candidate.inlineData?.data);
     const encoded = part?.inlineData?.data;
     if (!encoded) {
-      if (attempt < GEMINI_TTS_MAX_ATTEMPTS) {
+      if (attempt < maxAttempts) {
         await retryDelay(attempt, signal);
         continue;
       }
@@ -172,7 +183,7 @@ async function synthesizeGemini(
 
     const decoded = Buffer.from(encoded, "base64");
     if (!decoded.byteLength) {
-      if (attempt < GEMINI_TTS_MAX_ATTEMPTS) {
+      if (attempt < maxAttempts) {
         await retryDelay(attempt, signal);
         continue;
       }
@@ -190,10 +201,35 @@ async function synthesizeGemini(
         "Cache-Control": "private, no-store",
         "X-Content-Type-Options": "nosniff",
         "X-TTS-Provider": "gemini",
+        "X-TTS-Model": model,
       },
     });
   }
 
+  return null;
+}
+
+async function synthesizeGemini(
+  input: TtsRequestBody,
+  normalizedSpeech: string,
+  apiKey: string,
+  signal: AbortSignal,
+): Promise<Response | null> {
+  const models = geminiTtsModels();
+  for (let index = 0; index < models.length; index += 1) {
+    const model = models[index];
+    // Primary model gets one transient retry. The fallback model is tried once so worst-case latency stays bounded.
+    const maxAttempts = index === 0 ? GEMINI_TTS_MAX_ATTEMPTS : 1;
+    const response = await synthesizeGeminiModel(
+      input,
+      normalizedSpeech,
+      apiKey,
+      signal,
+      model,
+      maxAttempts,
+    );
+    if (response) return response;
+  }
   return null;
 }
 
