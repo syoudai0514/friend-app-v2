@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { CharacterStage } from "@/components/character/CharacterStage";
+import { BODY_SKIN_COLORS, CharacterStage, DEFAULT_SKIN_COLOR } from "@/components/character/CharacterStage";
 import { RarityBadge } from "@/components/ui";
 import { backgroundUrl } from "@/lib/backgrounds";
 import { MOTION, SCENE } from "@/lib/catalog";
@@ -19,6 +19,12 @@ const FACE_PARTS: { key: FaceLookKey; label: string; icon: string }[] = [
   { key: "iris", label: "瞳", icon: "👁️" },
   { key: "brows", label: "眉", icon: "〰️" },
   { key: "mouth", label: "口", icon: "👄" },
+];
+
+const SKIN_GLOSS_LEVELS: { key: "normal" | "strong" | null; label: string }[] = [
+  { key: null, label: "弱" },
+  { key: "normal", label: "普通" },
+  { key: "strong", label: "強" },
 ];
 
 const TABS: { id: TabId; label: string; icon: string; key?: ScalarLookKey }[] = [
@@ -401,6 +407,93 @@ export default function ClosetPage() {
                   </div>
                 </section>
               ))}
+
+              <section>
+                <h2 className="mb-1.5 px-0.5 text-[10px] font-bold text-[#777789]">
+                  🎨 肌の色
+                </h2>
+                <div className="grid grid-cols-4 gap-2">
+                  <button
+                    onClick={() => setEdited({ ...draft, skinTone: null })}
+                    title="自分の肌の色"
+                    className={`relative overflow-hidden rounded-xl border-2 transition active:scale-95 ${
+                      !draft.skinTone ? "border-pink-cta" : "border-transparent"
+                    }`}
+                    style={{
+                      backgroundColor: BODY_SKIN_COLORS[state.persona.id] ?? DEFAULT_SKIN_COLOR,
+                    }}
+                  >
+                    <div className="aspect-square w-full" />
+                    <span className="absolute top-0.5 right-1">
+                      <RarityBadge rarity="NR" />
+                    </span>
+                    <span
+                      className="absolute inset-x-0 bottom-0 truncate bg-black/45 px-1 py-[2px]
+                                 text-[9px] font-bold text-white"
+                    >
+                      自分の肌
+                    </span>
+                  </button>
+
+                  {borrowedHair.map((opt) => {
+                    const source: OutfitRef = {
+                      personaId: opt.personaId,
+                      variantId: opt.variantId,
+                    };
+                    const selected = draft.skinTone?.personaId === source.personaId;
+                    return (
+                      <button
+                        key={`skinTone:${opt.personaId}`}
+                        onClick={() => setEdited({ ...draft, skinTone: source })}
+                        title={`${opt.owner}の肌の色`}
+                        className={`relative overflow-hidden rounded-xl border-2 transition active:scale-95 ${
+                          selected ? "border-pink-cta" : "border-transparent"
+                        }`}
+                        style={{
+                          backgroundColor: BODY_SKIN_COLORS[opt.personaId] ?? DEFAULT_SKIN_COLOR,
+                        }}
+                      >
+                        <div className="aspect-square w-full" />
+                        <span className="absolute top-0.5 right-1">
+                          <RarityBadge rarity="NR" />
+                        </span>
+                        <span className="absolute inset-x-0 bottom-[14px] truncate px-1 text-[7px] font-bold text-white/90">
+                          {opt.owner}
+                        </span>
+                        <span
+                          className="absolute inset-x-0 bottom-0 truncate bg-black/40 px-1 py-[2px]
+                                     text-[9px] font-bold text-white"
+                        >
+                          肌の色
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+
+              <section>
+                <h2 className="mb-1.5 px-0.5 text-[10px] font-bold text-[#777789]">
+                  ✨ 肌の光沢（脚・体）
+                </h2>
+                <div className="grid grid-cols-3 gap-2">
+                  {SKIN_GLOSS_LEVELS.map((level) => {
+                    const selected = (draft.skinGloss ?? null) === level.key;
+                    return (
+                      <button
+                        key={level.label}
+                        onClick={() => setEdited({ ...draft, skinGloss: level.key })}
+                        className={`rounded-xl border-2 bg-gradient-to-b from-[#fff8f0] to-[#ffe9d6]
+                                    py-3 text-[12px] font-bold text-[#8e7657] transition active:scale-95 ${
+                                      selected ? "border-pink-cta" : "border-transparent"
+                                    }`}
+                      >
+                        {level.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
             </div>
           ) : (
             <div className="grid grid-cols-4 gap-2">

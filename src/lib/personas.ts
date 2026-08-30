@@ -88,7 +88,7 @@ export const PRESETS: PresetCharacter[] = [
         "ひなた、{user}といる時間がいちばん好きです！",
       ],
     },
-    look: { variantId: "default", scene: "classroom", motionId: "idle" },
+    look: { variantId: "casual", scene: "classroom", motionId: "idle" },
   },
   {
     persona: {

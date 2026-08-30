@@ -32,9 +32,16 @@ const DISPLAY_NAMES = {
     knit: "長袖ニット",
     leather: "黒レザードレス",
     fftifa: "FFVティファ",
+    onepiece: "ワンピース",
+    cardigan: "戦闘着1",
+    gunshorts: "ショーパン",
   },
   nagi: {
     default: "スタンダード",
+  },
+  hinata: {
+    casual: "私服（Tシャツショーパン）",
+    uniform: "制服ルーズ",
   },
   rena: {
     default: "スタンダード",

@@ -20,6 +20,10 @@ export interface Look {
   iris?: OutfitRef | null;
   brows?: OutfitRef | null;
   mouth?: OutfitRef | null;
+  /** 肌の色だけ別キャラのものに変える。variantIdは使わない */
+  skinTone?: OutfitRef | null;
+  /** 体（主に脚）の肌の光沢の強さ。null/未指定は既定の弱い艶 */
+  skinGloss?: "normal" | "strong" | null;
   scene: string;
   motionId: string;
 }

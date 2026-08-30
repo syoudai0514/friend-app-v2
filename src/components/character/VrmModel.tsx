@@ -92,6 +92,19 @@ function applyBoneOffset(
   bone.node.quaternion.multiply(bone.applied).normalize();
 }
 
+/**
+ * 腕を下ろした静止姿勢。normalizedボーンは「回転0 = T-pose」が基準なので絶対角度で指定する。
+ * 計測時に一度restポーズへ戻すと消えるため、関数として切り出して測り終えたら掛け直す。
+ */
+export function applyArmDownPose(vrm: VRM): void {
+  const armDown = Math.PI * 0.42;
+  const leftUpperArm = vrm.humanoid.getNormalizedBoneNode("leftUpperArm");
+  const rightUpperArm = vrm.humanoid.getNormalizedBoneNode("rightUpperArm");
+  if (leftUpperArm) leftUpperArm.rotation.z = armDown;
+  if (rightUpperArm) rightUpperArm.rotation.z = -armDown;
+}
+
+/** v1のまばたき間隔・閉眼時間に合わせる */
 const BLINK_MIN_MS = 2600;
 const BLINK_MAX_MS = 6200;
 const BLINK_CLOSE_MS = 130;
@@ -103,7 +116,7 @@ export interface ModelBounds {
   head: { x: number; y: number; z: number } | null;
 }
 
-export type VrmMaterialMode = "full" | "bodyAndClothes" | "onlyClothes" | "onlyHair";
+export type VrmMaterialMode = "full" | "onlyClothes" | "onlyHair";
 
 function isClothingMaterial(material: THREE.Material): boolean {
   return /_CLOTH(?:_| \(|$)/.test(material.name);
@@ -117,75 +130,40 @@ function isBodyMaterial(material: THREE.Material): boolean {
   return /Body_00_SKIN/.test(material.name);
 }
 
-function bodyGeometryWithoutHead(
-  mesh: THREE.SkinnedMesh,
-  head: THREE.Object3D,
-): THREE.BufferGeometry | null {
-  const geometry = mesh.geometry;
-  const position = geometry.getAttribute("position");
-  const skinIndex = geometry.getAttribute("skinIndex");
-  const skinWeight = geometry.getAttribute("skinWeight");
-  if (!position || !skinIndex || !skinWeight) return null;
-
-  const headBoneIndices = new Set<number>();
-  head.traverse((node) => {
-    const boneIndex = mesh.skeleton.bones.indexOf(node as THREE.Bone);
-    if (boneIndex >= 0) headBoneIndices.add(boneIndex);
-  });
-  if (headBoneIndices.size === 0) return null;
-
-  const belongsToHead = new Uint8Array(position.count);
-  let matchingVertices = 0;
-  for (let vertex = 0; vertex < position.count; vertex += 1) {
-    let headWeight = 0;
-    for (let slot = 0; slot < 4; slot += 1) {
-      if (headBoneIndices.has(skinIndex.getComponent(vertex, slot))) {
-        headWeight += skinWeight.getComponent(vertex, slot);
-      }
-    }
-    if (headWeight >= 0.35) {
-      belongsToHead[vertex] = 1;
-      matchingVertices += 1;
-    }
-  }
-  if (matchingVertices === 0) return null;
-
-  const sourceIndex = geometry.index;
-  const sourceCount = sourceIndex?.count ?? position.count;
-  const indexAt = (offset: number) => (sourceIndex ? sourceIndex.getX(offset) : offset);
-  const sourceGroups =
-    geometry.groups.length > 0
-      ? geometry.groups
-      : [{ start: 0, count: sourceCount, materialIndex: 0 }];
-  const ranges = new Map<string, { start: number; count: number }>();
-  const indices: number[] = [];
-
-  for (const group of sourceGroups) {
-    const key = `${group.start}:${group.count}`;
-    if (ranges.has(key)) continue;
-    const start = indices.length;
-    const end = Math.min(group.start + group.count, sourceCount);
-    for (let offset = group.start; offset + 2 < end; offset += 3) {
-      const a = indexAt(offset);
-      const b = indexAt(offset + 1);
-      const c = indexAt(offset + 2);
-      if (belongsToHead[a] || belongsToHead[b] || belongsToHead[c]) continue;
-      indices.push(a, b, c);
-    }
-    ranges.set(key, { start, count: indices.length - start });
-  }
-
-  const filtered = geometry.clone();
-  filtered.setIndex(indices);
-  filtered.clearGroups();
-  for (const group of sourceGroups) {
-    const range = ranges.get(`${group.start}:${group.count}`);
-    if (range) filtered.addGroup(range.start, range.count, group.materialIndex);
-  }
-  filtered.computeBoundingBox();
-  filtered.computeBoundingSphere();
-  return filtered;
+function isFaceSkinMaterial(material: THREE.Material): boolean {
+  return /Face_00_SKIN/.test(material.name);
 }
+
+/** MToonマテリアルのうち、脚などBodyの艶（matcap＋リムライト）を上書きする対象を表した型 */
+type SkinGlossMaterial = THREE.Material & {
+  isMToonMaterial: true;
+  matcapFactor: THREE.Color;
+  matcapTexture: THREE.Texture | null;
+  rimLightingMixFactor: number;
+  parametricRimColorFactor: THREE.Color;
+  parametricRimFresnelPowerFactor: number;
+  parametricRimLiftFactor: number;
+};
+
+function isSkinGlossMaterial(material: THREE.Material): material is SkinGlossMaterial {
+  return (
+    (material as { isMToonMaterial?: boolean }).isMToonMaterial === true &&
+    !(material as { isOutline?: boolean }).isOutline &&
+    isBodyMaterial(material)
+  );
+}
+
+/** しずくの黒レザードレスVRMから抽出した艶matcap。キャラを問わず共通で使う */
+const SKIN_GLOSS_MATCAP_URL = "/textures/skin-gloss-matcap.png";
+
+/** 「普通」はしずくのVRMに実際に入っている値、「強」はそれより強めた版 */
+const SKIN_GLOSS_PRESETS: Record<
+  "normal" | "strong",
+  { matcap: number; rimColor: number; fresnel: number; lift: number }
+> = {
+  normal: { matcap: 0.09, rimColor: 0.00155, fresnel: 100, lift: 0.1 },
+  strong: { matcap: 0.18, rimColor: 0.00155, fresnel: 100, lift: 0.1 },
+};
 
 type TexturedMaterial = THREE.Material & { map: THREE.Texture | null };
 type Rgb = readonly [number, number, number];
@@ -281,13 +259,14 @@ export function VrmModel({
   orbitControlsRef,
   materialMode = "full",
   hideClothes = false,
-  hideBody = false,
   hideHair = false,
   irisTextureUrl = null,
   browsTextureUrl = null,
   mouthTextureUrl = null,
   bodySkinColor = null,
   bodySkinSourceColor = null,
+  completeSkinUrl = null,
+  skinGlossLevel = null,
   initialView = null,
   minCameraDistance = 0,
   fitCamera = true,
@@ -310,13 +289,15 @@ export function VrmModel({
   orbitControlsRef: RefObject<OrbitControlsImpl | null>;
   materialMode?: VrmMaterialMode;
   hideClothes?: boolean;
-  hideBody?: boolean;
   hideHair?: boolean;
   irisTextureUrl?: string | null;
   browsTextureUrl?: string | null;
   mouthTextureUrl?: string | null;
   bodySkinColor?: string | null;
   bodySkinSourceColor?: string | null;
+  /** 借り物の服を着るときに使う「穴の無い体テクスチャ」のURL */
+  completeSkinUrl?: string | null;
+  skinGlossLevel?: "normal" | "strong" | null;
   initialView?: StageViewState | null;
   minCameraDistance?: number;
   fitCamera?: boolean;
@@ -326,7 +307,7 @@ export function VrmModel({
   modelOffsetY?: number;
   modelOffsetZ?: number;
   onMeasured?: (bounds: ModelBounds) => void;
-  onReady?: () => void;
+  onReady?: (vrm: VRM) => void;
   onError?: () => void;
 }) {
   const { vrm, error } = useVrm(url);
@@ -357,88 +338,199 @@ export function VrmModel({
       const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
       for (const material of materials) {
         const clothing = isClothingMaterial(material);
-        const body = isBodyMaterial(material);
         const hair = isHairMaterial(material);
-        if (materialMode === "bodyAndClothes") {
-          material.visible = body || clothing;
-        } else if (materialMode === "onlyClothes") {
+        if (materialMode === "onlyClothes") {
           material.visible = clothing;
         } else if (materialMode === "onlyHair") {
           material.visible = hair;
         } else {
-          material.visible =
-            !(hideClothes && clothing) && !(hideBody && body) && !(hideHair && hair);
+          material.visible = !(hideClothes && clothing) && !(hideHair && hair);
         }
       }
     });
-  }, [hideBody, hideClothes, hideHair, materialMode, vrm]);
+  }, [hideClothes, hideHair, materialMode, vrm]);
 
   useEffect(() => {
-    if (!vrm || materialMode !== "bodyAndClothes") return;
-    const head = vrm.humanoid.getRawBoneNode("head");
-    if (!head) return;
-
-    const replacements: Array<{
-      mesh: THREE.SkinnedMesh;
-      original: THREE.BufferGeometry;
-      filtered: THREE.BufferGeometry;
-    }> = [];
-    vrm.scene.traverse((obj) => {
-      if (!(obj instanceof THREE.SkinnedMesh)) return;
-      const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
-      if (!materials.some(isBodyMaterial)) return;
-      const filtered = bodyGeometryWithoutHead(obj, head);
-      if (!filtered) return;
-      replacements.push({ mesh: obj, original: obj.geometry, filtered });
-      obj.geometry = filtered;
-    });
-
-    return () => {
-      for (const { mesh, original, filtered } of replacements) {
-        mesh.geometry = original;
-        filtered.dispose();
-      }
-    };
-  }, [materialMode, vrm]);
-
-  useEffect(() => {
-    if (vrm) onReady?.();
+    if (vrm) onReady?.(vrm);
   }, [vrm, onReady]);
 
+  // 肌のテクスチャを決める。差し替え（穴の無い体）と塗り替え（肌の色）の両方が
+  // `material.map` を触るので、取り合いにならないよう1つのeffectにまとめてある。
+  //
+  // 1. completeSkinUrl があれば Body_00_SKIN をそれに差し替える。
+  //    VRoidは服の下に隠れる体をテクスチャのアルファで消しており（alphaMode=MASK）、
+  //    借り物の服は覆う範囲が違うため、そのままだと欠損部が穴として露出する
+  //    （なぎは胴体の25%、れなはバスト帯の94%が消えている）。
+  //    scripts/build-complete-skins.py で作った穴の無い版へ入れ替えて塞ぐ。
+  // 2. 肌の色指定があれば、その結果へ塗り替えをかける。
+  //    Face_00_SKINも同時に塗らないと顔だけ元の色のまま残り、首の境目で
+  //    二色に分かれて見える（顔は差し替え対象ではないので塗り替えのみ）。
   useEffect(() => {
-    if (!vrm || !bodySkinColor || !bodySkinSourceColor) return;
-    const source = parseHexColor(bodySkinSourceColor);
-    const target = parseHexColor(bodySkinColor);
-    if (!source || !target || source.every((channel, index) => channel === target[index])) return;
+    if (!vrm) return;
+    const source = bodySkinSourceColor ? parseHexColor(bodySkinSourceColor) : null;
+    const target = bodySkinColor ? parseHexColor(bodySkinColor) : null;
+    const recolors = Boolean(
+      source && target && !source.every((channel, index) => channel === target[index]),
+    );
+    if (!completeSkinUrl && !recolors) return;
 
+    let cancelled = false;
     const originalMaps = new Map<TexturedMaterial, THREE.Texture | null>();
-    const recoloredMaps = new Map<THREE.Texture, THREE.Texture>();
-    vrm.scene.traverse((obj) => {
-      if (!(obj instanceof THREE.Mesh)) return;
-      const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
-      for (const material of materials) {
-        if (!isBodyMaterial(material) || !hasTextureMap(material) || !material.map) continue;
-        const original = material.map;
-        let recolored = recoloredMaps.get(original);
-        if (!recolored) {
-          recolored = recolorBodyTexture(original, source, target) ?? undefined;
-          if (!recolored) continue;
-          recoloredMaps.set(original, recolored);
+    const createdTextures: THREE.Texture[] = [];
+
+    const collect = (predicate: (material: THREE.Material) => boolean) => {
+      const found: TexturedMaterial[] = [];
+      vrm.scene.traverse((obj) => {
+        if (!(obj instanceof THREE.Mesh)) return;
+        const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const material of materials) {
+          if (predicate(material) && hasTextureMap(material) && material.map) found.push(material);
         }
-        originalMaps.set(material, original);
-        material.map = recolored;
+      });
+      return found;
+    };
+
+    /** 差し替え後（または元のまま）のテクスチャへ、必要なら塗り替えをかけて適用する */
+    const apply = (materials: TexturedMaterial[], base: THREE.Texture | null) => {
+      if (cancelled) return;
+      const recoloredCache = new Map<THREE.Texture, THREE.Texture>();
+      for (const material of materials) {
+        const from = base ?? material.map;
+        if (!from) continue;
+        let next = from;
+        if (recolors && source && target) {
+          const cached = recoloredCache.get(from);
+          if (cached) {
+            next = cached;
+          } else {
+            const recolored = recolorBodyTexture(from, source, target);
+            if (recolored) {
+              recoloredCache.set(from, recolored);
+              createdTextures.push(recolored);
+              next = recolored;
+            }
+          }
+        }
+        if (next === material.map) continue;
+        if (!originalMaps.has(material)) originalMaps.set(material, material.map);
+        material.map = next;
         material.needsUpdate = true;
       }
-    });
+    };
+
+    const bodyMaterials = collect(isBodyMaterial);
+    const faceMaterials = collect(isFaceSkinMaterial);
+
+    // 顔は差し替えず、肌の色だけ体に合わせる
+    apply(faceMaterials, null);
+
+    if (completeSkinUrl) {
+      const loader = new THREE.TextureLoader();
+      loader.load(completeSkinUrl, (texture) => {
+        if (cancelled) {
+          texture.dispose();
+          return;
+        }
+        // VRM内蔵テクスチャと同じ扱いにしないと色空間・向きがずれる
+        const reference = bodyMaterials[0]?.map;
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.flipY = reference ? reference.flipY : false;
+        texture.wrapS = reference?.wrapS ?? THREE.ClampToEdgeWrapping;
+        texture.wrapT = reference?.wrapT ?? THREE.ClampToEdgeWrapping;
+        texture.needsUpdate = true;
+        createdTextures.push(texture);
+        apply(bodyMaterials, texture);
+      });
+    } else {
+      apply(bodyMaterials, null);
+    }
 
     return () => {
+      cancelled = true;
       for (const [material, map] of originalMaps) {
         material.map = map;
         material.needsUpdate = true;
       }
-      for (const texture of recoloredMaps.values()) texture.dispose();
+      for (const texture of createdTextures) texture.dispose();
     };
-  }, [bodySkinColor, bodySkinSourceColor, vrm]);
+  }, [bodySkinColor, bodySkinSourceColor, completeSkinUrl, vrm]);
+
+  // Bodyの艶（matcap＋リムライト）を選んだ強さで上書きする。しずくのVRMから
+  // 抽出した共通matcap画像を使うため、キャラを問わず同じ見た目の光沢になる。
+  // 未指定時は何もしない＝読み込み時の既定（addSkinSheenまたは各VRM内蔵の値）のまま
+  useEffect(() => {
+    if (!vrm || !skinGlossLevel) return;
+    const preset = SKIN_GLOSS_PRESETS[skinGlossLevel];
+
+    const targets: SkinGlossMaterial[] = [];
+    vrm.scene.traverse((obj) => {
+      if (!(obj instanceof THREE.Mesh)) return;
+      const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+      for (const material of materials) {
+        if (isSkinGlossMaterial(material)) targets.push(material);
+      }
+    });
+    if (targets.length === 0) return;
+
+    let cancelled = false;
+    const originals = new Map<
+      SkinGlossMaterial,
+      {
+        matcapFactor: THREE.Color;
+        matcapTexture: THREE.Texture | null;
+        rimLightingMixFactor: number;
+        parametricRimColorFactor: THREE.Color;
+        parametricRimFresnelPowerFactor: number;
+        parametricRimLiftFactor: number;
+      }
+    >();
+    for (const material of targets) {
+      originals.set(material, {
+        matcapFactor: material.matcapFactor.clone(),
+        matcapTexture: material.matcapTexture,
+        rimLightingMixFactor: material.rimLightingMixFactor,
+        parametricRimColorFactor: material.parametricRimColorFactor.clone(),
+        parametricRimFresnelPowerFactor: material.parametricRimFresnelPowerFactor,
+        parametricRimLiftFactor: material.parametricRimLiftFactor,
+      });
+    }
+
+    const loadedTextures: THREE.Texture[] = [];
+    const loader = new THREE.TextureLoader();
+    loader.load(SKIN_GLOSS_MATCAP_URL, (texture) => {
+      if (cancelled) {
+        texture.dispose();
+        return;
+      }
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.flipY = false;
+      texture.needsUpdate = true;
+      loadedTextures.push(texture);
+      for (const material of targets) {
+        material.matcapFactor.setScalar(preset.matcap);
+        material.matcapTexture = texture;
+        material.rimLightingMixFactor = 1;
+        material.parametricRimColorFactor.setScalar(preset.rimColor);
+        material.parametricRimFresnelPowerFactor = preset.fresnel;
+        material.parametricRimLiftFactor = preset.lift;
+        material.needsUpdate = true;
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      for (const [material, original] of originals) {
+        material.matcapFactor.copy(original.matcapFactor);
+        material.matcapTexture = original.matcapTexture;
+        material.rimLightingMixFactor = original.rimLightingMixFactor;
+        material.parametricRimColorFactor.copy(original.parametricRimColorFactor);
+        material.parametricRimFresnelPowerFactor = original.parametricRimFresnelPowerFactor;
+        material.parametricRimLiftFactor = original.parametricRimLiftFactor;
+        material.needsUpdate = true;
+      }
+      for (const texture of loadedTextures) texture.dispose();
+    };
+  }, [skinGlossLevel, vrm]);
 
   useEffect(() => {
     if (!vrm) return;
@@ -509,12 +601,7 @@ export function VrmModel({
 
   useEffect(() => {
     if (!vrm) return;
-    const humanoid = vrm.humanoid;
-    const armDown = Math.PI * 0.42;
-    const leftUpperArm = humanoid.getNormalizedBoneNode("leftUpperArm");
-    const rightUpperArm = humanoid.getNormalizedBoneNode("rightUpperArm");
-    if (leftUpperArm) leftUpperArm.rotation.z = armDown;
-    if (rightUpperArm) rightUpperArm.rotation.z = -armDown;
+    applyArmDownPose(vrm);
   }, [vrm]);
 
   useEffect(() => {
@@ -542,15 +629,32 @@ export function VrmModel({
     };
   }, [vrm, vrmAnimation]);
 
+  // 身長・足元・頭の位置を測って親へ渡す。ベースと借り物（服・髪）の位置合わせは
+  // この値の差で決まるため、**必ず同じ姿勢で測らなければならない**。
+  // モーション再生中の姿勢で測ると、借り物側（読み込み直後の静止姿勢で1回だけ測る）との
+  // 間で基準がずれ、髪が頭から外れる・服が上下にドリフトする事故になる。
+  // そのため (1) restポーズへ戻してから測り、(2) VRMごとに1回だけ走らせる。
+  const measuredRef = useRef<VRM | null>(null);
   useEffect(() => {
-    if (!vrm) return;
+    if (!vrm || measuredRef.current === vrm) return;
+    measuredRef.current = vrm;
+
+    // 計測中だけ素の姿勢に固定する。モーションは次のフレームで再評価されるので
+    // 見た目には影響しないが、armDownはここで消えるため測ったあとに掛け直す。
+    vrm.humanoid.resetNormalizedPose();
+    vrm.humanoid.update();
     vrm.scene.updateMatrixWorld(true);
+
     const box = new THREE.Box3().setFromObject(vrm.scene);
     const height = box.max.y - box.min.y;
-    if (!Number.isFinite(height) || height <= 0) return;
-
     const headNode = vrm.humanoid.getRawBoneNode("head");
     const headPosition = headNode ? headNode.getWorldPosition(new THREE.Vector3()) : null;
+
+    applyArmDownPose(vrm);
+    vrm.humanoid.update();
+    vrm.scene.updateMatrixWorld(true);
+
+    if (!Number.isFinite(height) || height <= 0) return;
     onMeasured?.({
       height,
       minY: box.min.y,
@@ -558,7 +662,20 @@ export function VrmModel({
         ? { x: headPosition.x, y: headPosition.y, z: headPosition.z }
         : null,
     });
-    if (!fitCamera) return;
+  }, [vrm, onMeasured]);
+
+  // v1の立ち絵に近いサイズ感（全身〜ふくらはぎ）になる位置を初期カメラとして計算し、
+  // OrbitControlsの注視点として渡す。そのあとの拡大・回転・移動はユーザー操作に任せる。
+  // モデルごとの身長差を吸収するため、固定距離ではなく実際の全身の高さから逆算する。
+  // 「初回ロード時に一度だけ」が意図なので、こちらもVRMごとに1回に固定する
+  const fittedCameraRef = useRef<VRM | null>(null);
+  useEffect(() => {
+    if (!vrm || !fitCamera || fittedCameraRef.current === vrm) return;
+    fittedCameraRef.current = vrm;
+    vrm.scene.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(vrm.scene);
+    const height = box.max.y - box.min.y;
+    if (!Number.isFinite(height) || height <= 0) return;
 
     const centerX = (box.min.x + box.max.x) / 2;
     const centerZ = (box.min.z + box.max.z) / 2;
@@ -594,7 +711,7 @@ export function VrmModel({
         controls.update();
       }
     }
-  }, [vrm, camera, fitCamera, initialView, minCameraDistance, onMeasured, orbitControlsRef]);
+  }, [vrm, camera, fitCamera, initialView, minCameraDistance, orbitControlsRef]);
 
   useFrame((frameState, delta) => {
     if (!vrm) return;

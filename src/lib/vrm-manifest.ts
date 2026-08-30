@@ -23,6 +23,18 @@ export const VRM_MANIFEST: Record<string, PartOption[]> = {
       "rarity": "NR"
     }
   ],
+  "hinata": [
+    {
+      "id": "casual",
+      "name": "私服（Tシャツショーパン）",
+      "rarity": "NR"
+    },
+    {
+      "id": "uniform",
+      "name": "制服ルーズ",
+      "rarity": "NR"
+    }
+  ],
   "nagi": [
     {
       "id": "default",
@@ -49,6 +61,11 @@ export const VRM_MANIFEST: Record<string, PartOption[]> = {
   ],
   "shizuku": [
     {
+      "id": "cardigan",
+      "name": "戦闘着1",
+      "rarity": "NR"
+    },
+    {
       "id": "casual",
       "name": "私服",
       "rarity": "NR"
@@ -59,6 +76,11 @@ export const VRM_MANIFEST: Record<string, PartOption[]> = {
       "rarity": "NR"
     },
     {
+      "id": "gunshorts",
+      "name": "ショーパン",
+      "rarity": "NR"
+    },
+    {
       "id": "knit",
       "name": "長袖ニット",
       "rarity": "NR"
@@ -66,6 +88,11 @@ export const VRM_MANIFEST: Record<string, PartOption[]> = {
     {
       "id": "leather",
       "name": "黒レザードレス",
+      "rarity": "NR"
+    },
+    {
+      "id": "onepiece",
+      "name": "ワンピース",
       "rarity": "NR"
     }
   ]

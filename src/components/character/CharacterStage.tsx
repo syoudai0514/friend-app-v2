@@ -12,10 +12,15 @@ import type { StageViewState } from "./stage-view";
 // three系はサイズが大きいので、クライアントでしか要らないWebGL部分だけ切り出して遅延読み込みする
 const VrmCanvas = dynamic(() => import("./VrmCanvas").then((m) => m.VrmCanvas), { ssr: false });
 
-const BODY_SKIN_COLORS: Record<string, string> = {
+// 各キャラのBody_00_SKINベーステクスチャから抽出した肌色の代表値
+// （肌色ピクセルの中央値。詳細はAGENTS.mdの「実装で分かった落とし穴」を参照）
+export const BODY_SKIN_COLORS: Record<string, string> = {
   aimi: "#f9e7d9",
   shizuku: "#e2c29f",
+  nagi: "#cb9771",
+  rena: "#f2c7b2",
 };
+export const DEFAULT_SKIN_COLOR = "#e6c8aa";
 
 // Next.jsの画面切替でCanvasが作り直されても、同じキャラ・衣装なら見ていた位置を戻す。
 // 衣装ごとに体格が違うため、見た目の組み合わせをキーにして混線を防ぐ。
@@ -99,7 +104,10 @@ export function CharacterStage({
 
   const showPoster = vrmStatus === "error" && !posterFailed;
   const showErrorText = vrmStatus === "error" && posterFailed;
-  const hasOutfitOverride = Boolean(look.outfit);
+  // 借り物の服を着ても体は常に本人のものなので、肌の色は肌色ピッカーの指定だけで決まる。
+  // 元の肌色から選んだ肌色へテクスチャを変換する（同じなら変換自体を行わない）。
+  const ownSkinColor = BODY_SKIN_COLORS[personaId] ?? DEFAULT_SKIN_COLOR;
+  const skinToneColor = look.skinTone ? (BODY_SKIN_COLORS[look.skinTone.personaId] ?? null) : null;
 
   return (
     <div className="absolute inset-0 bg-[#12121a]" style={{ bottom: lift }}>
@@ -125,10 +133,13 @@ export function CharacterStage({
         mouthTextureUrl={
           look.mouth ? `/face-parts/${look.mouth.personaId}/mouth.png` : null
         }
-        bodySkinColor={hasOutfitOverride ? (BODY_SKIN_COLORS[personaId] ?? "#e6c8aa") : null}
-        bodySkinSourceColor={
-          look.outfit ? (BODY_SKIN_COLORS[look.outfit.personaId] ?? "#e6c8aa") : null
-        }
+        bodySkinColor={skinToneColor}
+        bodySkinSourceColor={skinToneColor ? ownSkinColor : null}
+        // 借り物の服は覆う範囲が本人の衣装と違うため、VRoidがアルファで消した
+        // 「服の下の体」がそのままだと穴として露出する。借りているあいだだけ
+        // 穴の無い体テクスチャ（scripts/build-complete-skins.py で生成）に差し替える
+        completeSkinUrl={look.outfit ? `/skin/${personaId}.webp` : null}
+        skinGlossLevel={look.skinGloss ?? null}
         initialView={initialView}
         onViewChange={rememberView}
         motionUrl={vrmaUrl(look.motionId)}
