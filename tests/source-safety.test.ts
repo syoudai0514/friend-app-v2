@@ -7,8 +7,10 @@ function source(path: string): string {
   return readFileSync(join(process.cwd(), path), "utf8");
 }
 
+const chatSource = "src/app/chat/chat-page-base.tsx";
+
 test("ChatPage keeps model preview volatile and discards stale events", () => {
-  const chat = source("src/app/chat/page.tsx");
+  const chat = source(chatSource);
   assert.doesNotMatch(chat, /replaceLastModel\s*\(/);
   assert.match(chat, /event\.turnId !== activeTurnId\.current/);
   assert.match(chat, /event\.type === "turn_started"/);
@@ -17,7 +19,7 @@ test("ChatPage keeps model preview volatile and discards stale events", () => {
 });
 
 test("Abort, persona switch, route lifecycle and stale TTS are wired", () => {
-  const chat = source("src/app/chat/page.tsx");
+  const chat = source(chatSource);
   assert.match(chat, /generationAbort\.current\?\.abort\(\)/);
   assert.match(chat, /ttsAbort\.current\?\.abort\(\)/);
   assert.match(chat, /personaId\.current !== state\.persona\.id/);
@@ -28,7 +30,7 @@ test("Abort, persona switch, route lifecycle and stale TTS are wired", () => {
 });
 
 test("generation does not drive lip sync and narration precedes model speech UI", () => {
-  const chat = source("src/app/chat/page.tsx");
+  const chat = source(chatSource);
   assert.match(chat, /const isPlaying = audioState === "playing"/);
   assert.match(chat, /talking=\{isPlaying\}/);
 
@@ -37,6 +39,15 @@ test("generation does not drive lip sync and narration precedes model speech UI"
   const nameAt = modelComponent.indexOf("name-tag");
   const speechAt = modelComponent.indexOf("message.text");
   assert.ok(narrationAt >= 0 && narrationAt < nameAt && nameAt < speechAt);
+});
+
+test("chat wrapper installs the Live audio fetch bridge without changing persistent state", () => {
+  const wrapper = source("src/app/chat/page.tsx");
+  const bridge = source("src/lib/live-audio-fetch-bridge.ts");
+  assert.match(wrapper, /installLiveAudioFetchBridge/);
+  assert.match(bridge, /path === "\/api\/tts"/);
+  assert.match(bridge, /"X-TTS-Provider": "gemini-live-chat"/);
+  assert.doesNotMatch(bridge, /localStorage|sessionStorage/);
 });
 
 test("formal ChatMessage contract does not persist transaction IDs", () => {
