@@ -32,7 +32,15 @@ function audioCacheKey(personaId: string, message: ChatMessage): string {
 }
 
 export default function ChatPage() {
-  const { state, ready, addMessage, commitModelTurn, clearMessages } = useStore();
+  const {
+    state,
+    ready,
+    commitAck,
+    addMessage,
+    commitModelTurn,
+    clearCommitAck,
+    clearMessages,
+  } = useStore();
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [turnDraft, setTurnDraft] = useState<TurnDraft | null>(null);
@@ -43,6 +51,8 @@ export default function ChatPage() {
   const listRef = useRef<HTMLDivElement>(null);
   const pendingDone = useRef(false);
   const activeTurnId = useRef<string | null>(null);
+  const commitPendingTurnId = useRef<string | null>(null);
+  const pendingCanonicalTurns = useRef(new Map<string, ModelTurn>());
   const generationAbort = useRef<AbortController | null>(null);
   const ttsAbort = useRef<AbortController | null>(null);
   const audioRequestSerial = useRef(0);
@@ -64,9 +74,12 @@ export default function ChatPage() {
   }, []);
 
   const invalidateGeneration = useCallback(() => {
+    const invalidatedTurnId = activeTurnId.current;
     generationAbort.current?.abort();
     generationAbort.current = null;
     activeTurnId.current = null;
+    if (invalidatedTurnId) pendingCanonicalTurns.current.delete(invalidatedTurnId);
+    if (commitPendingTurnId.current === invalidatedTurnId) commitPendingTurnId.current = null;
     setTurnDraft(null);
     setBusy(false);
   }, []);
@@ -238,33 +251,57 @@ export default function ChatPage() {
       const expectedPersonaId = personaId.current;
       if (activeTurnId.current !== turnId || expectedPersonaId !== state.persona.id) return;
 
-      // transactionが受理されたときだけmodel/memory/affection/TTS eligibilityが成立する。
-      const committed = commitModelTurn(turnId, expectedPersonaId, turn);
-      if (!committed) return;
-
-      generationAbort.current = null;
-      setTurnDraft(null);
-      activeTurnId.current = null;
-      setBusy(false);
-
-      if (
-        state.voice.enabled &&
-        state.voice.autoplay &&
-        !autoplayTurns.current.has(turnId)
-      ) {
-        autoplayTurns.current.add(turnId);
-        const canonicalMessage: ChatMessage = {
-          role: "model",
-          text: turn.speech,
-          at: Date.now(),
-          ...(turn.narration ? { narration: turn.narration } : {}),
-          performance: turn.performance,
-        };
-        void playMessage(canonicalMessage, state.messages.length, "autoplay");
-      }
+      // canonical turnはsession内で待機させ、永続transactionと同じReact state transitionで
+      // commitAckが発行されるまでTTS eligibilityを成立させない。
+      pendingCanonicalTurns.current.set(turnId, turn);
+      commitPendingTurnId.current = turnId;
+      commitModelTurn(turnId, expectedPersonaId, turn);
     },
-    [commitModelTurn, playMessage, state.messages.length, state.persona.id, state.voice.autoplay, state.voice.enabled],
+    [commitModelTurn, state.persona.id],
   );
+
+  // commitAckはpersistent AppStateと同じstate transitionでだけ生成されるsession-only証跡。
+  // ここへ到達して初めてmodel/memory/affectionのcommit成立とTTS eligibilityを同一視できる。
+  useEffect(() => {
+    if (!commitAck) return;
+    const turn = pendingCanonicalTurns.current.get(commitAck.turnId);
+    const isActiveCommittedTurn =
+      Boolean(turn) &&
+      activeTurnId.current === commitAck.turnId &&
+      commitPendingTurnId.current === commitAck.turnId &&
+      personaId.current === commitAck.personaId &&
+      state.persona.id === commitAck.personaId;
+
+    pendingCanonicalTurns.current.delete(commitAck.turnId);
+    if (commitPendingTurnId.current === commitAck.turnId) commitPendingTurnId.current = null;
+    clearCommitAck(commitAck.turnId);
+
+    if (!isActiveCommittedTurn || !turn) return;
+
+    generationAbort.current = null;
+    setTurnDraft(null);
+    activeTurnId.current = null;
+    setBusy(false);
+
+    const canonicalMessage = state.messages[commitAck.messageIndex];
+    if (
+      canonicalMessage?.role === "model" &&
+      state.voice.enabled &&
+      state.voice.autoplay &&
+      !autoplayTurns.current.has(commitAck.turnId)
+    ) {
+      autoplayTurns.current.add(commitAck.turnId);
+      void playMessage(canonicalMessage, commitAck.messageIndex, "autoplay");
+    }
+  }, [
+    clearCommitAck,
+    commitAck,
+    playMessage,
+    state.messages,
+    state.persona.id,
+    state.voice.autoplay,
+    state.voice.enabled,
+  ]);
 
   const sendText = useCallback(
     async (raw: string) => {
@@ -352,15 +389,20 @@ export default function ChatPage() {
           }
         }
 
-        // complete/errorなしでstreamが切れた場合はpartial draftを破棄する。
-        if (activeTurnId.current === turnId) {
+        // complete/errorなしでstreamが切れた場合だけpartial draftを破棄する。
+        // turn_complete受信済みならsession-only commitAckを待つ。
+        if (
+          activeTurnId.current === turnId &&
+          commitPendingTurnId.current !== turnId
+        ) {
           setChatError("（返事の途中で通信が切れたみたい。もう一度送ってね）");
           invalidateGeneration();
         }
       } catch (error) {
         if (
           !(error instanceof DOMException && error.name === "AbortError") &&
-          activeTurnId.current === turnId
+          activeTurnId.current === turnId &&
+          commitPendingTurnId.current !== turnId
         ) {
           setChatError("（通信がうまくいかなかったみたい。電波を確認してね）");
           invalidateGeneration();
