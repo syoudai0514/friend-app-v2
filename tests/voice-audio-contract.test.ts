@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { isAppleMobileWebKit } from "../src/lib/audio-session";
 import {
   GEMINI_TTS_VOICE_BY_PERSONA,
   geminiTtsPrompt,
@@ -70,6 +71,33 @@ test("Gemini TTS fallback prompt and PCM wrapper preserve the audio privacy cont
   assert.equal(Buffer.from(wav.subarray(8, 12)).toString("ascii"), "WAVE");
   assert.equal(Buffer.from(wav.subarray(36, 40)).toString("ascii"), "data");
   assert.equal(wav.byteLength, 48);
+});
+
+test("iOS and touch iPad desktop mode use the direct HTML audio path", () => {
+  assert.equal(
+    isAppleMobileWebKit({
+      userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1",
+      platform: "iPhone",
+      maxTouchPoints: 5,
+    }),
+    true,
+  );
+  assert.equal(
+    isAppleMobileWebKit({
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15 Safari/605.1.15",
+      platform: "MacIntel",
+      maxTouchPoints: 5,
+    }),
+    true,
+  );
+  assert.equal(
+    isAppleMobileWebKit({
+      userAgent: "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/140 Mobile Safari/537.36",
+      platform: "Linux armv8l",
+      maxTouchPoints: 5,
+    }),
+    false,
+  );
 });
 
 test("fallback is eligible only when explicitly approved and configured", () => {
