@@ -1,4 +1,4 @@
-import { GoogleGenAI, Modality } from "@google/genai";
+import { GoogleGenAI, Modality, ThinkingLevel } from "@google/genai";
 
 const DEFAULT_LIVE_MODEL = "gemini-3.1-flash-live-preview";
 const LIVE_TIMEOUT_MS = 30_000;
@@ -67,7 +67,7 @@ export async function generateGeminiLive(input: GeminiLiveInput): Promise<Gemini
             },
           }
         : {}),
-      thinkingConfig: { thinkingLevel: "minimal" },
+      thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
     },
     callbacks: {
       onopen() {
