@@ -4,52 +4,82 @@
 
 - CURRENT main HEAD: `93d89d1076670998665aa3d49098e73e0ea3e807`
 - Branch: `feature/emotion-natural-voice`
-- Implementation commit: `cf3e98b8b08bbc7dc92f9d3afce574df3770b31c`
-- Documentation commit: `109df606e31636ef07ca33700cd700b6a941ed9f`
-- PR: created after the final documentation update; this branch is never merged by this work.
+- PR: `#16`
+- Original implementation HEAD reviewed: `34a6f82792c7d08e139281ca76ebcb3cb047db0a`
+- Gemini Schema subset fix: `0cbae89aad69c1ca225f87560bd0984a4c4bd562`
 
 ## Implemented architecture
 
-- `src/lib/dialogue.ts` owns `ModelTurn`, JSON Schema, runtime validation, server event parsing, and the isolated legacy adapter.
-- `/api/chat` asks Gemini for structured JSON server-side, validates it before emitting server-owned NDJSON events, retries structured output once, then uses legacy plain-text once. Gemini JSON fragments never reach the browser.
-- `TurnDraft` exists only in `ChatPage` React state. It is never placed in `AppState`, so stream interruption, abort, reload, and route change leave no partial model reply in localStorage.
-- `commitModelTurn()` is the sole model completion transaction: it commits exactly one speech message (`ChatMessage.text = ModelTurn.speech`), up to one memory, and `affection +1` in a single state transition. `turnId` prevents duplicate model commits.
-- Speech history is the only model history sent back to Gemini. Up to two `narration / expression / motionCue` records are sent separately as `recentPerformance`.
-- The chat UI renders narration above character name and speech. Preview switches to the canonical saved message only on `turn_complete`.
-- The abort controller / active turn ID discard stale events. New sends, persona change, and route unmount abort generation, clear the draft, and stop audio.
+- `src/lib/dialogue.ts` owns `ModelTurn`, Gemini provider schema, runtime validation, server event parsing, and the isolated legacy adapter.
+- `/api/chat` requests Gemini structured JSON server-side, parses/validates it before emitting server-owned NDJSON events, retries structured output once, then falls back to legacy plain text once. Gemini raw JSON fragments never reach the browser.
+- The Gemini `responseJsonSchema` intentionally uses only the CURRENT supported provider subset. String length rules such as narration <= 80, speech <= 360, and memory <= 120 are enforced in `validateModelTurn()` rather than with provider-side `minLength` / `maxLength` keywords.
+- `TurnDraft` exists only in `ChatPage` React state and is never put in `AppState`; interruption, abort, reload, persona switch, and route change cannot persist a partial model reply.
+- `commitModelTurn()` is the canonical completion transaction: one speech message (`ChatMessage.text = ModelTurn.speech`), at most one memory, and affection +1 in one persistent state transition. `turnId` prevents duplicate/stale commits.
+- Speech history is the only normal model history sent back to Gemini. Up to two narration/expression/motion records are passed separately as `recentPerformance`.
+- The UI renders narration above character name and speech. Streaming preview is volatile and is replaced by the canonical persisted message only after `turn_complete`.
+- New sends, persona changes, and route unmount abort generation, clear the volatile draft, invalidate stale turns, and stop audio.
 
 ## Voice and audio
 
-- `src/lib/voice.ts` contains the provider-neutral registry, safe default unconfigured profiles for the five current personas, a TTS input validator, and display-preserving text normalization.
-- `/api/tts` accepts only `{ personaId, speech, style, emotionIntensity }`. It neither accepts nor forwards chat history, user text, narration, memory, or prompts. Logs contain only request ID, provider, persona, character count, latency, and status.
-- No Aivis voice/model ID or license is guessed. All five profiles are `productionApproved: false`, therefore text-only is the safe behavior until a reviewed profile and the verified official API adapter are supplied.
-- `AudioSessionController` owns lock / idle / loading / playing / paused / interrupted / error behavior, stale stop, iPhone lifecycle stop, audio error handling, per-session blob cache, and optional RMS lip-sync. Browser SpeechSynthesis is not used as a fallback.
-- The settings page adds voice on/off and autoplay switches. Each model message has a playback button; disabled voice remains visibly unavailable instead of silently falling back.
+- `src/lib/voice.ts` and `src/lib/voice-server.ts` provide the provider-neutral registry, safe unconfigured defaults for all five personas, production-approval/license gates, TTS request validation, and display-preserving normalization.
+- `/api/tts` implements the Aivis Cloud adapter against the reviewed endpoint contract and accepts only `{ personaId, speech, style, emotionIntensity }`. It never accepts chat history, user text, narration, memory, or prompts, and logs only metadata.
+- Real Aivis model UUIDs, style names, API secret, and license approvals are intentionally not guessed. Profiles remain unavailable until those values are configured and `productionApproved` is explicitly true; otherwise the app safely remains text-only.
+- `AudioSessionController` owns locked / idle / loading / playing / paused / interrupted / error transitions, stale-audio stopping, lifecycle handling, play rejection, per-session audio cache, and best-effort RMS lip sync. Browser SpeechSynthesis is not an automatic fallback.
+- Settings include voice enabled and autoplay; each model message has a playback control.
 
 ## Performance
 
-- `src/lib/performance.ts` maps semantic intent to bounded runtime overlays. LLM output cannot select VRMA files, bones, angles, or lip-sync values.
-- The controller supports `look_away`, `small_nod`, and `head_tilt`; `lean_in` is deliberately a no-op until it can be checked against every current VRM.
-- VRMA base motion is evaluated before one composed semantic head/eye overlay, then expression morphs and finally audio-driven `aa` mouth movement. The old generation-time sinusoidal lip movement is removed.
+- `src/lib/performance.ts` converts semantic intent into bounded runtime overlays; the LLM cannot choose VRMA IDs, bones, angles, or lip-sync values.
+- `look_away`, `small_nod`, `head_tilt`, emotion intensity, and pause are implemented. `lean_in` is deliberately a no-op until torso/VRMA ownership can be visually validated.
+- VRMA base motion is evaluated before the composed semantic head/eye overlay, then expression morphs, then audio-driven mouth movement. Generation-time sinusoidal mouth movement has been removed.
 
-## Save migration
+## Save compatibility
 
-- Schema remains version 2 and is additive. Existing messages retain `text`; new `narration`, `performance`, `turnId`, and `voice` fields are optional/defaulted. Existing v1/v2 exports continue through `reconcile()`.
+- Save schema remains additive/backward compatible. Existing `ChatMessage.text` is retained; narration/performance/turn/audio-related fields are optional/defaulted.
+- Existing v1/v2 exports continue through reconciliation; no user data reset is performed.
 
 ## Environment and Aivis setup
 
-- `GEMINI_API_KEY` remains required for chat.
-- `AIVIS_API_KEY` is documented but not used until the official API contract is re-verified and a reviewed provider adapter is added.
-- Before enabling an Aivis profile: verify its real voice/model ID, official license URL, commercial and character-use scope, attribution, restrictions, review date, and the live official OpenAPI request/response contract. Then set that one profile to `productionApproved: true` and implement the verified adapter without logging speech text.
+- `GEMINI_API_KEY` is required for live chat.
+- `AIVIS_API_KEY` is required only when an approved Aivis voice profile is enabled.
+- For each persona, configure the real model UUID, reviewed license metadata, optional verified style names, and explicit production approval. Unknown values must remain unconfigured.
 
-## Validation
+## Validation status
 
-- Validation run in this work: ModelTurn validation, raw-event rejection, legacy adapter, TTS normalizer and unconfigured-provider safety; `npm run lint`; and `npm run build`.
-- iPhone manual validation: **NOT VERIFIED** in this environment. Verify manual play, post-unlock autoplay, 20–50 repeated plays, mute switch, Bluetooth, background/foreground, lock/unlock, route and persona changes, generation abort, TTS failure, network delay, and `audio.play()` rejection.
-- First audio latency: **not measured**. Measurement must start only after an approved provider is configured; store aggregate p50/p95 without speech text.
+- Previous PR HEAD `34a6f827...` had GitHub Actions `validate` SUCCESS (`npm test`, `npm run lint`, `npm run build`).
+- The final review found Gemini provider-schema keywords `minLength` / `maxLength` that are outside the CURRENT accepted `responseJsonSchema` subset. Commit `0cbae89...` removes those provider keywords while preserving all string-length checks in application runtime validation.
+- A new CI run must be GREEN on the post-fix branch HEAD before the PR is considered review-ready.
+- iPhone standalone PWA validation remains **NOT VERIFIED** in this environment.
+- First-audio latency p50/p95 remains **not measured** until a real approved voice profile/API key is configured.
 
-## Review points / limitations
+## Required iPhone manual checks
 
-- Aivis production playback is blocked rather than guessed because official endpoint/parameter verification and a licensed voice selection are not available here.
-- `lean_in` intentionally remains no-op pending VRM-by-VRM visual QA.
-- The server produces safe speech events after the complete structured response is validated; it does not expose partial structured JSON. This prioritizes transaction correctness over speculative TTS (Phase 7 is out of scope).
+- manual play
+- autoplay after user unlock
+- 20-50 consecutive plays
+- mute/silent behavior
+- Bluetooth output
+- background -> foreground
+- lock -> unlock
+- route/persona change while generating/playing
+- generation abort
+- network delay / TTS failure
+- `audio.play()` rejection recovery
+
+## Known limitations
+
+- Aivis is functionally wired but production voice configuration is blocked on real UUID/style/license/API-secret data.
+- `lean_in` remains intentionally disabled.
+- iPhone manual verification and first-audio latency measurements are still external/manual gates.
+- Phase 7 speculative sentence TTS / phoneme / viseme sync remains out of scope.
+
+## Review handoff
+
+Independent SOL review should focus on the post-fix HEAD and confirm:
+
+1. GitHub Actions validate is GREEN after the schema subset fix.
+2. No unsupported provider-schema keywords remain.
+3. TurnDraft never enters persistent state.
+4. `turn_complete` remains the only model/memory/affection/TTS eligibility boundary.
+5. Aivis remains disabled unless voice + license + approval configuration is complete.
+6. iPhone items above are reported as manual/not-verified rather than inferred.
