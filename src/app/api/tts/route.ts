@@ -12,6 +12,8 @@ export const dynamic = "force-dynamic";
 
 const AIVIS_SYNTHESIZE_URL = "https://api.aivis-project.com/v1/tts/synthesize";
 const DEFAULT_GEMINI_TTS_MODEL = "gemini-3.1-flash-tts-preview";
+const GEMINI_TTS_MAX_ATTEMPTS = 2;
+const GEMINI_TTS_RETRY_DELAY_MS = 300;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -74,6 +76,29 @@ interface GeminiTtsResponse {
   }>;
 }
 
+function retryableGeminiStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+async function retryDelay(attempt: number, signal: AbortSignal): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, GEMINI_TTS_RETRY_DELAY_MS * attempt);
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 async function synthesizeGemini(
   input: TtsRequestBody,
   normalizedSpeech: string,
@@ -82,56 +107,94 @@ async function synthesizeGemini(
 ): Promise<Response | null> {
   const model = process.env.GEMINI_TTS_MODEL?.trim() || DEFAULT_GEMINI_TTS_MODEL;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "x-goog-api-key": apiKey,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: geminiTtsPrompt(input, normalizedSpeech) }] }],
-      generationConfig: {
-        responseModalities: ["AUDIO"],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: {
-              voiceName: geminiTtsVoice(input.personaId),
+
+  for (let attempt = 1; attempt <= GEMINI_TTS_MAX_ATTEMPTS; attempt += 1) {
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "x-goog-api-key": apiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: geminiTtsPrompt(input, normalizedSpeech) }] }],
+          generationConfig: {
+            responseModalities: ["AUDIO"],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: {
+                  voiceName: geminiTtsVoice(input.personaId),
+                },
+              },
             },
           },
-        },
+        }),
+        signal,
+        cache: "no-store",
+      });
+    } catch (error) {
+      if (signal.aborted || (error instanceof DOMException && error.name === "AbortError")) throw error;
+      if (attempt < GEMINI_TTS_MAX_ATTEMPTS) {
+        await retryDelay(attempt, signal);
+        continue;
+      }
+      throw error;
+    }
+
+    if (!response.ok) {
+      if (retryableGeminiStatus(response.status) && attempt < GEMINI_TTS_MAX_ATTEMPTS) {
+        await retryDelay(attempt, signal);
+        continue;
+      }
+      return null;
+    }
+
+    let payload: GeminiTtsResponse;
+    try {
+      payload = await response.json() as GeminiTtsResponse;
+    } catch {
+      if (attempt < GEMINI_TTS_MAX_ATTEMPTS) {
+        await retryDelay(attempt, signal);
+        continue;
+      }
+      return null;
+    }
+    const part = payload.candidates?.[0]?.content?.parts?.find((candidate) => candidate.inlineData?.data);
+    const encoded = part?.inlineData?.data;
+    if (!encoded) {
+      if (attempt < GEMINI_TTS_MAX_ATTEMPTS) {
+        await retryDelay(attempt, signal);
+        continue;
+      }
+      return null;
+    }
+
+    const decoded = Buffer.from(encoded, "base64");
+    if (!decoded.byteLength) {
+      if (attempt < GEMINI_TTS_MAX_ATTEMPTS) {
+        await retryDelay(attempt, signal);
+        continue;
+      }
+      return null;
+    }
+    const raw = new Uint8Array(decoded.buffer, decoded.byteOffset, decoded.byteLength);
+    const mimeType = part?.inlineData?.mimeType?.toLowerCase() ?? "";
+    const audio = mimeType.includes("wav") ? raw : pcm16MonoToWav(raw);
+    const bytes = audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength) as ArrayBuffer;
+
+    return new Response(bytes, {
+      status: 200,
+      headers: {
+        "Content-Type": "audio/wav",
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff",
+        "X-TTS-Provider": "gemini",
       },
-    }),
-    signal,
-    cache: "no-store",
-  });
-  if (!response.ok) return null;
-
-  let payload: GeminiTtsResponse;
-  try {
-    payload = await response.json() as GeminiTtsResponse;
-  } catch {
-    return null;
+    });
   }
-  const part = payload.candidates?.[0]?.content?.parts?.find((candidate) => candidate.inlineData?.data);
-  const encoded = part?.inlineData?.data;
-  if (!encoded) return null;
 
-  const decoded = Buffer.from(encoded, "base64");
-  if (!decoded.byteLength) return null;
-  const raw = new Uint8Array(decoded.buffer, decoded.byteOffset, decoded.byteLength);
-  const mimeType = part?.inlineData?.mimeType?.toLowerCase() ?? "";
-  const audio = mimeType.includes("wav") ? raw : pcm16MonoToWav(raw);
-  const bytes = audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength) as ArrayBuffer;
-
-  return new Response(bytes, {
-    status: 200,
-    headers: {
-      "Content-Type": mimeType.includes("wav") ? "audio/wav" : "audio/wav",
-      "Cache-Control": "private, no-store",
-      "X-Content-Type-Options": "nosniff",
-      "X-TTS-Provider": "gemini",
-    },
-  });
+  return null;
 }
 
 function metadataLog(
