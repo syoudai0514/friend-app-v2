@@ -131,9 +131,22 @@ export function reconcile(saved: unknown): AppState {
   };
 }
 
+export interface ModelTurnCommitAck {
+  turnId: string;
+  personaId: string;
+  messageIndex: number;
+}
+
+interface RuntimeState {
+  app: AppState;
+  /** session-only。localStorageへは保存しない。transactionが実際にstateへ適用された証跡。 */
+  commitAck: ModelTurnCommitAck | null;
+}
+
 interface StoreValue {
   state: AppState;
   ready: boolean;
+  commitAck: ModelTurnCommitAck | null;
   update: (patch: Partial<AppState>) => void;
   setLook: (patch: Partial<Look>) => void;
   setPersona: (patch: Partial<Persona>) => void;
@@ -142,8 +155,9 @@ interface StoreValue {
   replaceLastModel: (text: string) => void;
   gainAffection: (amount: number) => void;
   addMemory: (text: string) => void;
-  /** turn_complete専用。model/memory/affectionを同じsetStateで一度だけ確定する。 */
-  commitModelTurn: (turnId: string, expectedPersonaId: string, turn: ModelTurn) => boolean;
+  /** turn_complete専用。model/memory/affectionとsession-only ackを同じstate transitionで確定する。 */
+  commitModelTurn: (turnId: string, expectedPersonaId: string, turn: ModelTurn) => void;
+  clearCommitAck: (turnId: string) => void;
   setVoiceSettings: (patch: Partial<VoiceSettings>) => void;
   removeMemory: (index: number) => void;
   applyPreset: (presetId: string) => void;
@@ -168,7 +182,8 @@ const onClient = () => true;
 const onServer = () => false;
 
 export function AppStateProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<AppState>(loadState);
+  const [runtime, setRuntime] = useState<RuntimeState>(() => ({ app: loadState(), commitAck: null }));
+  const state = runtime.app;
   const stateRef = useRef(state);
   const transactionLedger = useRef(new ConversationTransactionLedger());
   const ready = useSyncExternalStore(neverChanges, onClient, onServer);
@@ -180,6 +195,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!ready) return;
     try {
+      // runtime.commitAckはsession-onlyなので永続化しない。
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch {
       // 容量超過でも会話は継続する。
@@ -187,84 +203,120 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   }, [state, ready]);
 
   const update = useCallback((patch: Partial<AppState>) => {
-    setState((current) => ({ ...current, ...patch }));
+    setRuntime((current) => ({ ...current, app: { ...current.app, ...patch } }));
   }, []);
 
   const setLook = useCallback((patch: Partial<Look>) => {
-    setState((current) => ({ ...current, look: { ...current.look, ...patch } }));
+    setRuntime((current) => ({
+      ...current,
+      app: { ...current.app, look: { ...current.app.look, ...patch } },
+    }));
   }, []);
 
   const setPersona = useCallback((patch: Partial<Persona>) => {
-    setState((current) => ({ ...current, persona: { ...current.persona, ...patch } }));
+    setRuntime((current) => ({
+      ...current,
+      app: { ...current.app, persona: { ...current.app.persona, ...patch } },
+    }));
   }, []);
 
   const addMessage = useCallback((message: ChatMessage) => {
-    setState((current) => ({ ...current, messages: [...current.messages, message] }));
+    setRuntime((current) => ({
+      ...current,
+      app: { ...current.app, messages: [...current.app.messages, message] },
+    }));
   }, []);
 
   const replaceLastModel = useCallback((text: string) => {
-    setState((current) => {
-      const messages = [...current.messages];
+    setRuntime((current) => {
+      const messages = [...current.app.messages];
       for (let index = messages.length - 1; index >= 0; index -= 1) {
         if (messages[index].role === "model") {
           messages[index] = { ...messages[index], text };
           break;
         }
       }
-      return { ...current, messages };
+      return { ...current, app: { ...current.app, messages } };
     });
   }, []);
 
   const gainAffection = useCallback((amount: number) => {
-    setState((current) => ({ ...current, affection: current.affection + amount }));
+    setRuntime((current) => ({
+      ...current,
+      app: { ...current.app, affection: current.app.affection + amount },
+    }));
   }, []);
 
   const addMemory = useCallback((text: string) => {
     const trimmed = text.trim();
     if (!trimmed) return;
-    setState((current) => {
-      const rest = current.memories.filter((memory) => memory !== trimmed);
-      return { ...current, memories: [...rest, trimmed].slice(-MAX_MEMORIES) };
+    setRuntime((current) => {
+      const rest = current.app.memories.filter((memory) => memory !== trimmed);
+      return {
+        ...current,
+        app: { ...current.app, memories: [...rest, trimmed].slice(-MAX_MEMORIES) },
+      };
     });
   }, []);
 
   const commitModelTurn = useCallback(
-    (turnId: string, expectedPersonaId: string, turn: ModelTurn): boolean => {
+    (turnId: string, expectedPersonaId: string, turn: ModelTurn): void => {
       const current = stateRef.current;
       if (
         current.persona.id !== expectedPersonaId ||
         !transactionLedger.current.accept(turnId)
       ) {
-        return false;
+        return;
       }
-      setState((snapshot) => {
-        if (snapshot.persona.id !== expectedPersonaId) {
+
+      setRuntime((snapshot) => {
+        if (snapshot.app.persona.id !== expectedPersonaId) {
           transactionLedger.current.release(turnId);
           return snapshot;
         }
-        return applyConversationTransaction(snapshot, turn);
+        const app = applyConversationTransaction(snapshot.app, turn);
+        return {
+          app,
+          commitAck: {
+            turnId,
+            personaId: expectedPersonaId,
+            messageIndex: app.messages.length - 1,
+          },
+        };
       });
-      return true;
     },
     [],
   );
 
+  const clearCommitAck = useCallback((turnId: string) => {
+    setRuntime((current) =>
+      current.commitAck?.turnId === turnId ? { ...current, commitAck: null } : current,
+    );
+  }, []);
+
   const setVoiceSettings = useCallback((patch: Partial<VoiceSettings>) => {
-    setState((current) => ({ ...current, voice: { ...current.voice, ...patch } }));
+    setRuntime((current) => ({
+      ...current,
+      app: { ...current.app, voice: { ...current.app.voice, ...patch } },
+    }));
   }, []);
 
   const removeMemory = useCallback((index: number) => {
-    setState((current) => ({
+    setRuntime((current) => ({
       ...current,
-      memories: current.memories.filter((_, memoryIndex) => memoryIndex !== index),
+      app: {
+        ...current.app,
+        memories: current.app.memories.filter((_, memoryIndex) => memoryIndex !== index),
+      },
     }));
   }, []);
 
   const applyPreset = useCallback((presetId: string) => {
     const preset = PRESETS.find((candidate) => candidate.persona.id === presetId);
     if (!preset) return;
-    setState((current) => {
-      if (presetId === current.persona.id) return current;
+    setRuntime((runtimeSnapshot) => {
+      const current = runtimeSnapshot.app;
+      if (presetId === current.persona.id) return runtimeSnapshot;
       const personas: Record<string, PersonaSave> = {
         ...current.personas,
         [current.persona.id]: {
@@ -277,30 +329,34 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       };
       const saved = personas[presetId];
       return {
-        ...current,
-        persona: saved ? saved.persona : preset.persona,
-        look: saved ? saved.look : preset.look,
-        affection: saved ? saved.affection : 0,
-        messages: saved ? saved.messages : [],
-        memories: saved ? saved.memories : [],
-        personas,
+        ...runtimeSnapshot,
+        app: {
+          ...current,
+          persona: saved ? saved.persona : preset.persona,
+          look: saved ? saved.look : preset.look,
+          affection: saved ? saved.affection : 0,
+          messages: saved ? saved.messages : [],
+          memories: saved ? saved.memories : [],
+          personas,
+        },
       };
     });
   }, []);
 
   const clearMessages = useCallback(() => {
-    setState((current) => ({ ...current, messages: [] }));
+    setRuntime((current) => ({ ...current, app: { ...current.app, messages: [] } }));
   }, []);
 
   const resetAll = useCallback(() => {
     transactionLedger.current.clear();
-    setState(INITIAL);
+    setRuntime({ app: INITIAL, commitAck: null });
   }, []);
 
   const value = useMemo<StoreValue>(
     () => ({
       state,
       ready,
+      commitAck: runtime.commitAck,
       update,
       setLook,
       setPersona,
@@ -309,6 +365,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       gainAffection,
       addMemory,
       commitModelTurn,
+      clearCommitAck,
       setVoiceSettings,
       removeMemory,
       applyPreset,
@@ -318,6 +375,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [
       state,
       ready,
+      runtime.commitAck,
       update,
       setLook,
       setPersona,
@@ -326,6 +384,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       gainAffection,
       addMemory,
       commitModelTurn,
+      clearCommitAck,
       setVoiceSettings,
       removeMemory,
       applyPreset,
