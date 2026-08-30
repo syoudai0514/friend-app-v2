@@ -4,7 +4,8 @@
 
 - CURRENT main HEAD: `93d89d1076670998665aa3d49098e73e0ea3e807`
 - Branch: `feature/emotion-natural-voice`
-- This document is completed on the feature branch. Commit and PR IDs are added after the final validation push.
+- Implementation commit: `39e9449ace0b78e319a4209ece52ccfed4ce6c9e`
+- PR: created after the final documentation commit and push; this branch is never merged by this work.
 
 ## Implemented architecture
 
