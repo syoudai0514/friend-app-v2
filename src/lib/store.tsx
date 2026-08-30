@@ -6,11 +6,13 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { DEFAULT_LOOK } from "./catalog";
+import { applyConversationTransaction, ConversationTransactionLedger } from "./conversation-transaction";
 import { DEFAULT_PERSONA, PRESETS } from "./personas";
 import type { AppState, ChatMessage, Look, ModelTurn, Persona, PersonaSave, VoiceSettings } from "./types";
 
@@ -75,6 +77,30 @@ function reconcileLook(saved: unknown, schemaVersion: number): Look {
   };
 }
 
+/** optional fieldsだけを加算的に復元し、未知のruntime metadataは保存へ持ち込まない。 */
+function reconcileMessages(saved: unknown): ChatMessage[] {
+  if (!Array.isArray(saved)) return [];
+  const messages: ChatMessage[] = [];
+  for (const value of saved) {
+    if (!value || typeof value !== "object") continue;
+    const raw = value as Record<string, unknown>;
+    if ((raw.role !== "user" && raw.role !== "model") || typeof raw.text !== "string") continue;
+    const at = typeof raw.at === "number" && Number.isFinite(raw.at) ? raw.at : Date.now();
+    messages.push({
+      role: raw.role,
+      text: raw.text,
+      at,
+      ...(typeof raw.narration === "string" && raw.narration.trim()
+        ? { narration: raw.narration.trim().slice(0, 80) }
+        : {}),
+      ...(raw.performance && typeof raw.performance === "object"
+        ? { performance: raw.performance as ChatMessage["performance"] }
+        : {}),
+    });
+  }
+  return messages;
+}
+
 /** 保存済みキャラ1件分。壊れていたら null を返し、丸ごと読み飛ばせるようにする */
 function reconcilePersonaSave(saved: unknown, schemaVersion: number): PersonaSave | null {
   if (!saved || typeof saved !== "object") return null;
@@ -84,7 +110,7 @@ function reconcilePersonaSave(saved: unknown, schemaVersion: number): PersonaSav
     persona: { ...DEFAULT_PERSONA, ...s.persona } as Persona,
     look: reconcileLook(s.look, schemaVersion),
     affection: typeof s.affection === "number" ? s.affection : 0,
-    messages: Array.isArray(s.messages) ? (s.messages as ChatMessage[]) : [],
+    messages: reconcileMessages(s.messages),
     memories: Array.isArray(s.memories) ? s.memories.filter((m) => typeof m === "string") : [],
   };
 }
@@ -112,7 +138,7 @@ export function reconcile(saved: unknown): AppState {
     persona: { ...DEFAULT_PERSONA, ...(s.persona ?? {}) } as Persona,
     look: reconcileLook(s.look, schemaVersion),
     affection: typeof s.affection === "number" ? s.affection : 0,
-    messages: Array.isArray(s.messages) ? (s.messages as ChatMessage[]) : [],
+    messages: reconcileMessages(s.messages),
     memories: Array.isArray(s.memories) ? s.memories.filter((m) => typeof m === "string") : [],
     personas,
     voice: {
@@ -130,13 +156,13 @@ interface StoreValue {
   setLook: (patch: Partial<Look>) => void;
   setPersona: (patch: Partial<Persona>) => void;
   addMessage: (m: ChatMessage) => void;
-  /** 直近の model メッセージを置き換える（ストリーミング用） */
+  /** legacy互換。新しいchat streaming draftからは使用禁止。 */
   replaceLastModel: (text: string) => void;
   gainAffection: (n: number) => void;
   /** 会話から覚えた要点を1つ追加する。増えすぎたら古いものから消える */
   addMemory: (text: string) => void;
   /** turn_complete専用。model/memory/affectionを同じsetStateで一度だけ確定する。 */
-  commitModelTurn: (turnId: string, turn: ModelTurn) => void;
+  commitModelTurn: (turnId: string, expectedPersonaId: string, turn: ModelTurn) => boolean;
   setVoiceSettings: (patch: Partial<VoiceSettings>) => void;
   /** 覚えた要点を1つ消す */
   removeMemory: (index: number) => void;
@@ -169,6 +195,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   // 初回描画で localStorage を読む。サーバーとの描画のズレは
   // ready が false のあいだ各画面が待つことで防いでいる
   const [state, setState] = useState<AppState>(loadState);
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const transactionLedger = useRef(new ConversationTransactionLedger());
   const ready = useSyncExternalStore(neverChanges, onClient, onServer);
 
   useEffect(() => {
@@ -217,37 +246,25 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     const trimmed = text.trim();
     if (!trimmed) return;
     setState((s) => {
-      // 同じ内容の覚え直しで無限に増えないようにする
       const rest = s.memories.filter((m) => m !== trimmed);
       const memories = [...rest, trimmed].slice(-MAX_MEMORIES);
       return { ...s, memories };
     });
   }, []);
 
-  const commitModelTurn = useCallback((turnId: string, turn: ModelTurn) => {
+  const commitModelTurn = useCallback((turnId: string, expectedPersonaId: string, turn: ModelTurn): boolean => {
+    const current = stateRef.current;
+    if (current.persona.id !== expectedPersonaId || !transactionLedger.current.accept(turnId)) return false;
     setState((s) => {
-      // 受信の重複、retry後の古いcompleteの双方をここでも防ぐ。
-      if (s.messages.some((m) => m.turnId === turnId)) return s;
-      const messages = [...s.messages, {
-        role: "model" as const,
-        text: turn.speech,
-        at: Date.now(),
-        narration: turn.narration,
-        performance: turn.performance,
-        turnId,
-      }];
-      const learned = turn.memory?.trim();
-      const memories = learned
-        ? [...s.memories.filter((m) => m !== learned), learned].slice(-MAX_MEMORIES)
-        : s.memories;
-      return {
-        ...s,
-        messages,
-        memories,
-        // user turnごとにこのtransactionだけが+1する。
-        affection: s.affection + 1,
-      };
+      if (s.persona.id !== expectedPersonaId) {
+        transactionLedger.current.release(turnId);
+        return s;
+      }
+      const next = applyConversationTransaction(s, turn);
+      stateRef.current = next;
+      return next;
     });
+    return true;
   }, []);
 
   const setVoiceSettings = useCallback((patch: Partial<VoiceSettings>) => {
@@ -255,7 +272,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const removeMemory = useCallback((index: number) => {
-    setState((s) => ({ ...s, memories: s.memories.filter((_, i) => i !== index) }));
+    setState((s) => ({ ...s, memories: s.memories.filter((_, i) => i !== index }));
   }, []);
 
   const applyPreset = useCallback((presetId: string) => {
@@ -263,7 +280,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!preset) return;
     setState((s) => {
       if (presetId === s.persona.id) return s;
-      // 今のキャラの会話・好感度・記憶・見た目をしまってから切り替える
       const personas: Record<string, PersonaSave> = {
         ...s.personas,
         [s.persona.id]: {
@@ -292,6 +308,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const resetAll = useCallback(() => {
+    transactionLedger.current.clear();
     setState(INITIAL);
   }, []);
 
