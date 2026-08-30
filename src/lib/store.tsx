@@ -18,8 +18,6 @@ import type { AppState, ChatMessage, Look, ModelTurn, Persona, PersonaSave, Voic
 
 const STORAGE_KEY = "friend-app:v2";
 const SCHEMA_VERSION = 2;
-
-/** 覚えておく要点は増えすぎないよう、直近のものだけ残す */
 const MAX_MEMORIES = 40;
 const DEFAULT_VOICE: VoiceSettings = { enabled: false, autoplay: false };
 
@@ -36,17 +34,8 @@ const INITIAL: AppState = {
   voice: DEFAULT_VOICE,
 };
 
-/**
- * v1の look.outfit -> v2の variantId 対応表。
- * まだVRoidで衣装別のVRMを書き出していないため空。Phase 4で埋める
- */
 const OUTFIT_TO_VARIANT: Record<string, string> = {};
 
-/**
- * v1形式のlookをv2形式へ変換する。
- * v1のhair/eyes/mouthなどVRMで意味を持たない項目は捨て、
- * scene（IDの体系は共通のまま）はそのまま引き継ぐ
- */
 function migrateLook(saved: unknown): Look {
   if (!saved || typeof saved !== "object") return DEFAULT_LOOK;
   const o = saved as Record<string, unknown>;
@@ -101,7 +90,6 @@ function reconcileMessages(saved: unknown): ChatMessage[] {
   return messages;
 }
 
-/** 保存済みキャラ1件分。壊れていたら null を返し、丸ごと読み飛ばせるようにする */
 function reconcilePersonaSave(saved: unknown, schemaVersion: number): PersonaSave | null {
   if (!saved || typeof saved !== "object") return null;
   const s = saved as Partial<PersonaSave>;
@@ -115,20 +103,15 @@ function reconcilePersonaSave(saved: unknown, schemaVersion: number): PersonaSav
   };
 }
 
-/**
- * 保存済みデータに欠けたキーがあっても壊れないようにする。
- * エクスポートしたJSONの読み込み（v1エクスポートも含む）にも使う
- */
 export function reconcile(saved: unknown): AppState {
   if (!saved || typeof saved !== "object") return INITIAL;
   const s = saved as Partial<AppState>;
-  // v1が書き出したJSONにはschemaVersionが無いので、その場合は1とみなす
   const schemaVersion = typeof s.schemaVersion === "number" ? s.schemaVersion : 1;
   const personas: Record<string, PersonaSave> = {};
   if (s.personas && typeof s.personas === "object") {
-    for (const [id, v] of Object.entries(s.personas as Record<string, unknown>)) {
-      const r = reconcilePersonaSave(v, schemaVersion);
-      if (r) personas[id] = r;
+    for (const [id, value] of Object.entries(s.personas as Record<string, unknown>)) {
+      const reconciled = reconcilePersonaSave(value, schemaVersion);
+      if (reconciled) personas[id] = reconciled;
     }
   }
   return {
@@ -150,21 +133,18 @@ export function reconcile(saved: unknown): AppState {
 
 interface StoreValue {
   state: AppState;
-  /** localStorage からの読み込みが終わったか */
   ready: boolean;
   update: (patch: Partial<AppState>) => void;
   setLook: (patch: Partial<Look>) => void;
   setPersona: (patch: Partial<Persona>) => void;
-  addMessage: (m: ChatMessage) => void;
+  addMessage: (message: ChatMessage) => void;
   /** legacy互換。新しいchat streaming draftからは使用禁止。 */
   replaceLastModel: (text: string) => void;
-  gainAffection: (n: number) => void;
-  /** 会話から覚えた要点を1つ追加する。増えすぎたら古いものから消える */
+  gainAffection: (amount: number) => void;
   addMemory: (text: string) => void;
   /** turn_complete専用。model/memory/affectionを同じsetStateで一度だけ確定する。 */
   commitModelTurn: (turnId: string, expectedPersonaId: string, turn: ModelTurn) => boolean;
   setVoiceSettings: (patch: Partial<VoiceSettings>) => void;
-  /** 覚えた要点を1つ消す */
   removeMemory: (index: number) => void;
   applyPreset: (presetId: string) => void;
   clearMessages: () => void;
@@ -173,27 +153,21 @@ interface StoreValue {
 
 const StoreContext = createContext<StoreValue | null>(null);
 
-/** localStorage から読み込む。サーバー側では実行されない */
 function loadState(): AppState {
   if (typeof window === "undefined") return INITIAL;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? reconcile(JSON.parse(raw)) : INITIAL;
   } catch {
-    // 壊れたデータは無視して初期値のまま進む
     return INITIAL;
   }
 }
 
-/* ハイドレーションが済んだかを知るための最小限のストア。
-   サーバーでは false、クライアントに渡ったあとは true を返す。 */
 const neverChanges = () => () => {};
 const onClient = () => true;
 const onServer = () => false;
 
 export function AppStateProvider({ children }: { children: ReactNode }) {
-  // 初回描画で localStorage を読む。サーバーとの描画のズレは
-  // ready が false のあいだ各画面が待つことで防いでいる
   const [state, setState] = useState<AppState>(loadState);
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -205,94 +179,104 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch {
-      // 容量超過などは黙って諦める（会話は続けられる）
+      // 容量超過でも会話は継続する。
     }
   }, [state, ready]);
 
   const update = useCallback((patch: Partial<AppState>) => {
-    setState((s) => ({ ...s, ...patch }));
+    setState((current) => ({ ...current, ...patch }));
   }, []);
 
   const setLook = useCallback((patch: Partial<Look>) => {
-    setState((s) => ({ ...s, look: { ...s.look, ...patch } }));
+    setState((current) => ({ ...current, look: { ...current.look, ...patch } }));
   }, []);
 
   const setPersona = useCallback((patch: Partial<Persona>) => {
-    setState((s) => ({ ...s, persona: { ...s.persona, ...patch } }));
+    setState((current) => ({ ...current, persona: { ...current.persona, ...patch } }));
   }, []);
 
-  const addMessage = useCallback((m: ChatMessage) => {
-    setState((s) => ({ ...s, messages: [...s.messages, m] }));
+  const addMessage = useCallback((message: ChatMessage) => {
+    setState((current) => ({ ...current, messages: [...current.messages, message] }));
   }, []);
 
   const replaceLastModel = useCallback((text: string) => {
-    setState((s) => {
-      const messages = [...s.messages];
-      for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].role === "model") {
-          messages[i] = { ...messages[i], text };
+    setState((current) => {
+      const messages = [...current.messages];
+      for (let index = messages.length - 1; index >= 0; index -= 1) {
+        if (messages[index].role === "model") {
+          messages[index] = { ...messages[index], text };
           break;
         }
       }
-      return { ...s, messages };
+      return { ...current, messages };
     });
   }, []);
 
-  const gainAffection = useCallback((n: number) => {
-    setState((s) => ({ ...s, affection: s.affection + n }));
+  const gainAffection = useCallback((amount: number) => {
+    setState((current) => ({ ...current, affection: current.affection + amount }));
   }, []);
 
   const addMemory = useCallback((text: string) => {
     const trimmed = text.trim();
     if (!trimmed) return;
-    setState((s) => {
-      const rest = s.memories.filter((m) => m !== trimmed);
-      const memories = [...rest, trimmed].slice(-MAX_MEMORIES);
-      return { ...s, memories };
+    setState((current) => {
+      const rest = current.memories.filter((memory) => memory !== trimmed);
+      return { ...current, memories: [...rest, trimmed].slice(-MAX_MEMORIES) };
     });
   }, []);
 
-  const commitModelTurn = useCallback((turnId: string, expectedPersonaId: string, turn: ModelTurn): boolean => {
-    const current = stateRef.current;
-    if (current.persona.id !== expectedPersonaId || !transactionLedger.current.accept(turnId)) return false;
-    setState((s) => {
-      if (s.persona.id !== expectedPersonaId) {
-        transactionLedger.current.release(turnId);
-        return s;
+  const commitModelTurn = useCallback(
+    (turnId: string, expectedPersonaId: string, turn: ModelTurn): boolean => {
+      const current = stateRef.current;
+      if (
+        current.persona.id !== expectedPersonaId ||
+        !transactionLedger.current.accept(turnId)
+      ) {
+        return false;
       }
-      const next = applyConversationTransaction(s, turn);
-      stateRef.current = next;
-      return next;
-    });
-    return true;
-  }, []);
+      setState((snapshot) => {
+        if (snapshot.persona.id !== expectedPersonaId) {
+          transactionLedger.current.release(turnId);
+          return snapshot;
+        }
+        const next = applyConversationTransaction(snapshot, turn);
+        stateRef.current = next;
+        return next;
+      });
+      return true;
+    },
+    [],
+  );
 
   const setVoiceSettings = useCallback((patch: Partial<VoiceSettings>) => {
-    setState((s) => ({ ...s, voice: { ...s.voice, ...patch } }));
+    setState((current) => ({ ...current, voice: { ...current.voice, ...patch } }));
   }, []);
 
   const removeMemory = useCallback((index: number) => {
-    setState((s) => ({ ...s, memories: s.memories.filter((_, i) => i !== index }));
+    setState((current) => ({
+      ...current,
+      memories: current.memories.filter((_, memoryIndex) => memoryIndex !== index),
+    }));
   }, []);
 
   const applyPreset = useCallback((presetId: string) => {
-    const preset = PRESETS.find((p) => p.persona.id === presetId);
+    const preset = PRESETS.find((candidate) => candidate.persona.id === presetId);
     if (!preset) return;
-    setState((s) => {
-      if (presetId === s.persona.id) return s;
+    setState((current) => {
+      if (presetId === current.persona.id) return current;
       const personas: Record<string, PersonaSave> = {
-        ...s.personas,
-        [s.persona.id]: {
-          persona: s.persona,
-          look: s.look,
-          affection: s.affection,
-          messages: s.messages,
-          memories: s.memories,
+        ...current.personas,
+        [current.persona.id]: {
+          persona: current.persona,
+          look: current.look,
+          affection: current.affection,
+          messages: current.messages,
+          memories: current.memories,
         },
       };
       const saved = personas[presetId];
       return {
-        ...s,
+        ...current,
         persona: saved ? saved.persona : preset.persona,
         look: saved ? saved.look : preset.look,
         affection: saved ? saved.affection : 0,
@@ -304,7 +288,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const clearMessages = useCallback(() => {
-    setState((s) => ({ ...s, messages: [] }));
+    setState((current) => ({ ...current, messages: [] }));
   }, []);
 
   const resetAll = useCallback(() => {
@@ -353,7 +337,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 }
 
 export function useStore(): StoreValue {
-  const ctx = useContext(StoreContext);
-  if (!ctx) throw new Error("useStore は AppStateProvider の中でしか使えません");
-  return ctx;
+  const context = useContext(StoreContext);
+  if (!context) throw new Error("useStore は AppStateProvider の中でしか使えません");
+  return context;
 }
