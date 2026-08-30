@@ -12,13 +12,14 @@ import {
 } from "react";
 import { DEFAULT_LOOK } from "./catalog";
 import { DEFAULT_PERSONA, PRESETS } from "./personas";
-import type { AppState, ChatMessage, Look, Persona, PersonaSave } from "./types";
+import type { AppState, ChatMessage, Look, ModelTurn, Persona, PersonaSave, VoiceSettings } from "./types";
 
 const STORAGE_KEY = "friend-app:v2";
 const SCHEMA_VERSION = 2;
 
 /** 覚えておく要点は増えすぎないよう、直近のものだけ残す */
 const MAX_MEMORIES = 40;
+const DEFAULT_VOICE: VoiceSettings = { enabled: false, autoplay: false };
 
 const INITIAL: AppState = {
   schemaVersion: SCHEMA_VERSION,
@@ -30,6 +31,7 @@ const INITIAL: AppState = {
   messages: [],
   memories: [],
   personas: {},
+  voice: DEFAULT_VOICE,
 };
 
 /**
@@ -113,6 +115,10 @@ export function reconcile(saved: unknown): AppState {
     messages: Array.isArray(s.messages) ? (s.messages as ChatMessage[]) : [],
     memories: Array.isArray(s.memories) ? s.memories.filter((m) => typeof m === "string") : [],
     personas,
+    voice: {
+      enabled: s.voice?.enabled === true,
+      autoplay: s.voice?.autoplay === true,
+    },
   };
 }
 
@@ -129,6 +135,9 @@ interface StoreValue {
   gainAffection: (n: number) => void;
   /** 会話から覚えた要点を1つ追加する。増えすぎたら古いものから消える */
   addMemory: (text: string) => void;
+  /** turn_complete専用。model/memory/affectionを同じsetStateで一度だけ確定する。 */
+  commitModelTurn: (turnId: string, turn: ModelTurn) => void;
+  setVoiceSettings: (patch: Partial<VoiceSettings>) => void;
   /** 覚えた要点を1つ消す */
   removeMemory: (index: number) => void;
   applyPreset: (presetId: string) => void;
@@ -215,6 +224,36 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const commitModelTurn = useCallback((turnId: string, turn: ModelTurn) => {
+    setState((s) => {
+      // 受信の重複、retry後の古いcompleteの双方をここでも防ぐ。
+      if (s.messages.some((m) => m.turnId === turnId)) return s;
+      const messages = [...s.messages, {
+        role: "model" as const,
+        text: turn.speech,
+        at: Date.now(),
+        narration: turn.narration,
+        performance: turn.performance,
+        turnId,
+      }];
+      const learned = turn.memory?.trim();
+      const memories = learned
+        ? [...s.memories.filter((m) => m !== learned), learned].slice(-MAX_MEMORIES)
+        : s.memories;
+      return {
+        ...s,
+        messages,
+        memories,
+        // user turnごとにこのtransactionだけが+1する。
+        affection: s.affection + 1,
+      };
+    });
+  }, []);
+
+  const setVoiceSettings = useCallback((patch: Partial<VoiceSettings>) => {
+    setState((s) => ({ ...s, voice: { ...s.voice, ...patch } }));
+  }, []);
+
   const removeMemory = useCallback((index: number) => {
     setState((s) => ({ ...s, memories: s.memories.filter((_, i) => i !== index) }));
   }, []);
@@ -267,6 +306,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       replaceLastModel,
       gainAffection,
       addMemory,
+      commitModelTurn,
+      setVoiceSettings,
       removeMemory,
       applyPreset,
       clearMessages,
@@ -282,6 +323,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       replaceLastModel,
       gainAffection,
       addMemory,
+      commitModelTurn,
+      setVoiceSettings,
       removeMemory,
       applyPreset,
       clearMessages,

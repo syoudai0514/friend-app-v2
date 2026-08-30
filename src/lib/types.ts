@@ -54,6 +54,62 @@ export interface ChatMessage {
   role: "user" | "model";
   text: string;
   at: number;
+  /** model の実発話以外は保存しない。旧saveでは未指定。 */
+  narration?: string;
+  performance?: ModelPerformanceIntent;
+  /** transaction の重複防止用。UIには表示しない。 */
+  turnId?: string;
+}
+
+export type EmotionId =
+  | "normal"
+  | "happy"
+  | "shy"
+  | "sad"
+  | "angry"
+  | "surprised"
+  | "sleepy";
+
+export type VoiceStyleId =
+  | "neutral"
+  | "bright"
+  | "soft"
+  | "shy"
+  | "sad"
+  | "serious"
+  | "excited";
+
+export type MotionCue = "none" | "look_away" | "small_nod" | "head_tilt" | "lean_in";
+export type PauseCue = "none" | "short" | "medium";
+
+export interface ModelPerformanceIntent {
+  version: 1;
+  expression: EmotionId;
+  emotionIntensity?: number;
+  motionCue?: MotionCue;
+  voiceStyle?: VoiceStyleId;
+  pause?: PauseCue;
+}
+
+export interface ModelTurn {
+  protocolVersion: 1;
+  narration?: string;
+  speech: string;
+  memory?: string | null;
+  performance: ModelPerformanceIntent;
+}
+
+/** Streaming preview専用。AppState/localStorageへ入れてはいけない。 */
+export interface TurnDraft {
+  turnId: string;
+  narration?: string;
+  speech: string;
+  performance?: Partial<ModelPerformanceIntent>;
+}
+
+export interface VoiceSettings {
+  enabled: boolean;
+  autoplay: boolean;
 }
 
 /** キャラごとに分けて保存する中身。切り替えても他のキャラの分は消えない */
@@ -83,6 +139,7 @@ export interface AppState {
   memories: string[];
   /** 今えらんでいないキャラの分の保存データ（persona.id をキーにする） */
   personas: Record<string, PersonaSave>;
+  voice: VoiceSettings;
 }
 
 /** 好感度レベル。会話のトーンが段階的に変わる */

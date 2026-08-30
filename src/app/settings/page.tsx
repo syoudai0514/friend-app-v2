@@ -146,7 +146,7 @@ function LockSection() {
 
 export default function SettingsPage() {
   const router = useRouter();
-  const { state, ready, update, setPersona, removeMemory, resetAll } = useStore();
+  const { state, ready, update, setPersona, removeMemory, resetAll, setVoiceSettings } = useStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importError, setImportError] = useState("");
 
@@ -278,6 +278,24 @@ export default function SettingsPage() {
               }
             />
           </Field>
+        </section>
+
+        <section className="space-y-3 rounded-2xl bg-white p-4 shadow-sm">
+          <h2 className="text-[14px] font-bold text-[#2b2b33]">キャラクター音声</h2>
+          <p className="text-[11px] leading-relaxed text-[#9a9aa8]">
+            音声をオンにすると、返答の実際のセリフだけを音声サービスへ送ります。地の文・あなたの発言・記憶は送られません。
+          </p>
+          <label className="flex items-center justify-between rounded-xl bg-[#f6f7fa] px-3.5 py-3 text-[13px] text-[#4a4a5a]">
+            <span>キャラクター音声</span>
+            <input type="checkbox" checked={state.voice.enabled} onChange={(e) => setVoiceSettings({ enabled: e.target.checked, autoplay: e.target.checked ? state.voice.autoplay : false })} />
+          </label>
+          <label className="flex items-center justify-between rounded-xl bg-[#f6f7fa] px-3.5 py-3 text-[13px] text-[#4a4a5a]">
+            <span>返答後に自動再生</span>
+            <input type="checkbox" disabled={!state.voice.enabled} checked={state.voice.autoplay} onChange={(e) => setVoiceSettings({ autoplay: e.target.checked })} />
+          </label>
+          <p className="text-[11px] leading-relaxed text-[#9a9aa8]">
+            音源・ライセンスの設定が完了していないキャラクターは、文字会話のまま安全に動作します。
+          </p>
         </section>
 
         {/* ------------------------------ 好感度 ------------------------------ */}

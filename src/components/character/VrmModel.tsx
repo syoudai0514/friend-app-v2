@@ -7,6 +7,8 @@ import type { VRM } from "@pixiv/three-vrm";
 import { createVRMAnimationClip } from "@pixiv/three-vrm-animation";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { EXPRESSIONS, type Expression } from "@/lib/expressions";
+import { performanceRuntime } from "@/lib/performance";
+import type { ModelPerformanceIntent } from "@/lib/types";
 import { useVrm } from "./useVrm";
 import { useVrma } from "./useVrma";
 import type { StageViewState } from "./stage-view";
@@ -284,6 +286,8 @@ export function VrmModel({
   motionUrl,
   expression,
   talking,
+  lipSync,
+  performance,
   reducedMotion,
   orbitControlsRef,
   materialMode = "full",
@@ -311,6 +315,8 @@ export function VrmModel({
   motionUrl: string;
   expression: Expression;
   talking: boolean;
+  lipSync: number;
+  performance?: Partial<ModelPerformanceIntent>;
   reducedMotion: boolean;
   orbitControlsRef: RefObject<OrbitControlsImpl | null>;
   materialMode?: VrmMaterialMode;
@@ -338,7 +344,6 @@ export function VrmModel({
   const { vrmAnimation } = useVrma(motionUrl);
   const { camera } = useThree();
   const blink = useRef({ nextAt: 0, closingUntil: 0 });
-  const talkClock = useRef(0);
   const mixer = useRef<THREE.AnimationMixer | null>(null);
   const activeAction = useRef<THREE.AnimationAction | null>(null);
   const clipDuration = useRef(0);
@@ -346,6 +351,7 @@ export function VrmModel({
   const shyPose = useRef<ShyPose | null>(null);
   const headWorldPosition = useRef(new THREE.Vector3());
   const headCameraOffset = useRef(new THREE.Vector3());
+  const runtimePerformance = performanceRuntime({ expression, ...performance });
 
   useEffect(() => {
     if (error) onError?.();
@@ -650,7 +656,7 @@ export function VrmModel({
     }
 
     if (pose) {
-      const target = expression === "shy" ? 1 : 0;
+      const target = runtimePerformance.head.some((value) => value !== 0) ? 1 : 0;
       pose.weight = reducedMotion
         ? target
         : THREE.MathUtils.damp(pose.weight, target, 10, delta);
@@ -658,21 +664,21 @@ export function VrmModel({
       // 軽くうつむいて顔をそらし、目だけを下・反対側へ向ける照れ姿勢。
       applyBoneOffset(
         pose.head,
-        THREE.MathUtils.degToRad(-9) * w,
-        THREE.MathUtils.degToRad(3.5) * w,
-        THREE.MathUtils.degToRad(-1.5) * w,
+        THREE.MathUtils.degToRad(runtimePerformance.head[0]) * w,
+        THREE.MathUtils.degToRad(runtimePerformance.head[1]) * w,
+        THREE.MathUtils.degToRad(runtimePerformance.head[2]) * w,
       );
       applyBoneOffset(
         pose.leftEye,
-        THREE.MathUtils.degToRad(-7) * w,
-        THREE.MathUtils.degToRad(-3) * w,
-        0,
+        THREE.MathUtils.degToRad(runtimePerformance.eyes[0]) * w,
+        THREE.MathUtils.degToRad(runtimePerformance.eyes[1]) * w,
+        THREE.MathUtils.degToRad(runtimePerformance.eyes[2]) * w,
       );
       applyBoneOffset(
         pose.rightEye,
-        THREE.MathUtils.degToRad(-7) * w,
-        THREE.MathUtils.degToRad(-3) * w,
-        0,
+        THREE.MathUtils.degToRad(runtimePerformance.eyes[0]) * w,
+        THREE.MathUtils.degToRad(runtimePerformance.eyes[1]) * w,
+        THREE.MathUtils.degToRad(runtimePerformance.eyes[2]) * w,
       );
     }
 
@@ -705,10 +711,8 @@ export function VrmModel({
         expr.setValue("blink", 0);
       }
 
-      // 返事を書いているあいだ、口をぱくぱくさせる
-      talkClock.current += delta;
-      const aa = talking ? Math.max(0, Math.sin(talkClock.current * 14)) * 0.6 : 0;
-      expr.setValue("aa", aa);
+      // generation中は口を動かさない。実音声再生中だけRMS由来の値を適用する。
+      expr.setValue("aa", talking ? THREE.MathUtils.clamp(lipSync, 0, 1) * 0.72 : 0);
     }
 
     // normalizedボーンと表情を反映してから、スプリングボーン等を更新する。

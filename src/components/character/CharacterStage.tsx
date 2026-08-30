@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { backgroundUrl } from "@/lib/backgrounds";
 import type { Expression } from "@/lib/expressions";
-import type { Look } from "@/lib/types";
+import type { Look, ModelPerformanceIntent } from "@/lib/types";
 import { posterUrl, vrmaUrl, vrmUrl } from "@/lib/vrm-assets";
 import type { StageViewState } from "./stage-view";
 
@@ -61,12 +61,16 @@ export function CharacterStage({
   personaId,
   expression = "normal",
   talking = false,
+  lipSync = 0,
+  performance,
   lift = 0,
 }: {
   look: Look;
   personaId: string;
   expression?: Expression;
   talking?: boolean;
+  lipSync?: number;
+  performance?: Partial<ModelPerformanceIntent>;
   lift?: number;
 }) {
   const reducedMotion = usePrefersReducedMotion();
@@ -130,6 +134,8 @@ export function CharacterStage({
         motionUrl={vrmaUrl(look.motionId)}
         expression={expression}
         talking={talking}
+        lipSync={lipSync}
+        performance={performance}
         reducedMotion={reducedMotion}
         orbitControlsRef={orbitControlsRef}
         onReady={() => setVrmStatus("ready")}
