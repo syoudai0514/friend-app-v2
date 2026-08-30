@@ -44,8 +44,7 @@
 
 ## Validation
 
-- Automated unit tests: ModelTurn validation, raw-event rejection, legacy adapter, TTS normalizer and unconfigured-provider safety.
-- Build: `npm run build`.
+- Validation run in this work: ModelTurn validation, raw-event rejection, legacy adapter, TTS normalizer and unconfigured-provider safety; `npm run lint`; and `npm run build`.
 - iPhone manual validation: **NOT VERIFIED** in this environment. Verify manual play, post-unlock autoplay, 20–50 repeated plays, mute switch, Bluetooth, background/foreground, lock/unlock, route and persona changes, generation abort, TTS failure, network delay, and `audio.play()` rejection.
 - First audio latency: **not measured**. Measurement must start only after an approved provider is configured; store aggregate p50/p95 without speech text.
 

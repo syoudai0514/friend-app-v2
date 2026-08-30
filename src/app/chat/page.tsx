@@ -164,7 +164,7 @@ export default function ChatPage() {
         invalidateActiveTurn();
       }
     }
-  }, [addMessage, commitTurn, invalidateActiveTurn, state.affection, state.look, state.memories, state.messages, state.persona, state.userName]);
+  }, [addMessage, commitTurn, invalidateActiveTurn, state.affection, state.look, state.memories, state.messages, state.persona, state.userName, state.voice.autoplay, state.voice.enabled]);
 
   useEffect(() => {
     if (!ready || pendingDone.current) return;

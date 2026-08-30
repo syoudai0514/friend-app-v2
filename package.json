@@ -9,8 +9,7 @@
     "prebuild": "npm run assets",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
-    "test": "vitest run"
+    "lint": "eslint"
   },
   "dependencies": {
     "@google/genai": "^2.13.0",
@@ -33,7 +32,6 @@
     "eslint-config-next": "16.2.12",
     "playwright": "^1.62.0",
     "tailwindcss": "^4",
-    "typescript": "^5",
-    "vitest": "^4.1.11"
+    "typescript": "^5"
   }
 }
