@@ -14,16 +14,21 @@ const motions: MotionCue[] = ["none", "look_away", "small_nod", "head_tilt", "le
 const styles: VoiceStyleId[] = ["neutral", "bright", "soft", "shy", "sad", "serious", "excited"];
 const pauses: PauseCue[] = ["none", "short", "medium"];
 
-/** Geminiへ渡すJSON Schema。browserには一切転送しない。 */
+/**
+ * Geminiへ渡すresponseJsonSchema。
+ * Gemini CURRENT structured-output subsetに未対応の文字列長keywordは置かず、
+ * 長さ制約は必ずvalidateModelTurn()でアプリ側検証する。
+ * このSchema自体をbrowserへ転送しない。
+ */
 export const MODEL_TURN_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["protocolVersion", "speech", "performance"],
   properties: {
     protocolVersion: { type: "integer", enum: [1] },
-    narration: { type: "string", maxLength: 80 },
-    speech: { type: "string", minLength: 1, maxLength: 360 },
-    memory: { type: ["string", "null"], maxLength: 120 },
+    narration: { type: "string" },
+    speech: { type: "string" },
+    memory: { type: ["string", "null"] },
     performance: {
       type: "object",
       additionalProperties: false,
