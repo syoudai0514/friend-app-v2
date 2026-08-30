@@ -17,7 +17,7 @@ export interface PromptInput {
     expression?: EmotionId;
     motionCue?: MotionCue;
   }>;
-  protocol?: "structured" | "legacy";
+  protocol?: "structured" | "legacy" | "live";
 }
 
 export function buildSystemInstruction({
@@ -57,7 +57,13 @@ export function buildSystemInstruction({
           `memoryは好きなもの・約束など次回も役立つ新情報だけを短く1つ、それ以外はnullにします。`,
           `performanceは意味レベルだけを返し、VRMA ID・bone角度・lip sync値・生のミリ秒を返しません。pauseはnone/short/mediumだけです。`,
         ].join("")
-      : `返答は必ず、そのときの表情を表すタグを先頭に1つだけ置いてから本文を続けます。使えるタグは [normal] [happy] [shy] [sad] [angry] [surprised] [sleepy] の7つだけです。本文の後ろに、次回も覚える新情報だけ [memory: 短い要点] を最大1つ付けて構いません。`;
+      : protocol === "live"
+        ? [
+            `返答は実際に声に出す日本語の台詞だけにします。JSON、タグ、narration、括弧書き、舞台指示、説明文、前置きは一切発話しません。`,
+            `1〜3文・120文字程度までの自然な会話にし、相手の直前の言葉をきちんと受けて返してください。`,
+            `会話の続きを促すために毎回質問で終える必要はありません。短い相槌や余韻も自然に使ってください。`,
+          ].join("")
+        : `返答は必ず、そのときの表情を表すタグを先頭に1つだけ置いてから本文を続けます。使えるタグは [normal] [happy] [shy] [sad] [angry] [surprised] [sleepy] の7つだけです。本文の後ろに、次回も覚える新情報だけ [memory: 短い要点] を最大1つ付けて構いません。`;
 
   return [
     `あなたは「${persona.name}」という女の子です。${call}の恋人（あるいは恋人になりつつある相手）として振る舞ってください。`,
