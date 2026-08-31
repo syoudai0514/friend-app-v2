@@ -35,7 +35,7 @@ function decodeBase64Pcm16(encoded: string): Float32Array | null {
 
 /**
  * Live APIのraw PCMをwhole-WAV化せず再生する専用engine。
- * AudioContextは事前生成し、resume()は送信tapのcall stack内から呼び出す。
+ * AudioContextは事前生成し、resume()は送信tapのcall stack内から開始する。
  */
 export class LivePcmPlayer {
   private context: AudioContext | null = null;
@@ -82,6 +82,7 @@ export class LivePcmPlayer {
   private async prepareInternal(): Promise<boolean> {
     if (!this.isSupported() || this.disposed) return false;
     try {
+      // AudioContextの生成自体は最初のprepare呼び出しで同期的に行う。
       this.context ??= new AudioContext({ latencyHint: "interactive" });
       await this.context.audioWorklet.addModule("/live-pcm-worklet.js");
       if (this.disposed) return false;
@@ -115,14 +116,27 @@ export class LivePcmPlayer {
     }
   }
 
-  /** 必ずuser gesture由来の処理から呼ぶ。 */
+  /** 必ずuser gesture由来の処理から呼ぶ。resume()を最初のawaitより前に開始する。 */
   async unlock(): Promise<boolean> {
     if (!this.isSupported() || this.disposed) return false;
-    const prepared = await this.prepare();
-    if (!prepared || !this.context) return false;
+
+    const preparing = this.prepare();
+    const context = this.context;
+    if (!context) return false;
+
+    let resuming: Promise<void>;
     try {
-      if (this.context.state !== "running") await this.context.resume();
-      return this.context.state === "running";
+      resuming = context.state === "running" ? Promise.resolve() : context.resume();
+    } catch {
+      this.emit("error", 0);
+      return false;
+    }
+
+    const prepared = await preparing;
+    if (!prepared || this.disposed) return false;
+    try {
+      await resuming;
+      return this.context?.state === "running";
     } catch {
       this.emit("error", 0);
       return false;
