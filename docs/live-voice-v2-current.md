@@ -4,19 +4,24 @@ This document records the intended CURRENT Live Voice V2 voice-casting state use
 
 ## Shizuku
 
-- Gemini Live prebuilt voice: `Autonoe`
-- target: adult (20s) anime-romance heroine
-- brighter / slightly higher / sweeter timbre
-- close-distance delivery with light breathiness
+- Gemini Live model: `gemini-2.5-flash-native-audio-preview-12-2025`
+- Gemini Live prebuilt voice: `Achernar` (`Soft`)
+- target: adult (20s) cute romantic partner / anime-romance heroine
+- soft, sweet, rounded delivery instead of bright or crisp delivery
+- slightly slower pace with gentle phrase endings
+- close-distance delivery with occasional natural breathiness and small pauses
 - subtle sensuality as a baseline nuance, without childlike voice or exaggerated moaning/whispering
-- keeps the yurufuwa-gyaru speech style and slightly older-sister warmth
+- keeps a light yurufuwa-gyaru flavor while prioritizing intimate girlfriend warmth
+- explicit prohibition on announcer, service-staff, sporty, or overly articulate delivery
+
+Why the model differs from the other personas: recent Gemini 3.1 Flash Live + ephemeral-token reports show `prebuiltVoiceConfig.voiceName` can be ignored, while native-audio Live models are the documented voice-selectable path. Shizuku is temporarily pinned to the 2.5 native-audio preview so the selected voice color can actually be auditioned.
 
 ## Other personas
 
-- Aimi: `Zephyr`
-- Nagi: `Kore`
-- Hinata: `Leda`
-- Rena: `Gacrux`
+- Aimi: `gemini-3.1-flash-live-preview` / `Zephyr`
+- Nagi: `gemini-3.1-flash-live-preview` / `Kore`
+- Hinata: `gemini-3.1-flash-live-preview` / `Leda`
+- Rena: `gemini-3.1-flash-live-preview` / `Gacrux`
 
 ## Production release retry
 

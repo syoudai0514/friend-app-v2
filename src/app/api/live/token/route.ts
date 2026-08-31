@@ -3,9 +3,9 @@ import { PRESETS } from "@/lib/personas";
 import {
   LIVE_VOICE_API_VERSION,
   LIVE_VOICE_BY_PERSONA,
-  LIVE_VOICE_MODEL,
   buildLiveVoiceSystemInstruction,
   liveVoiceContextKey,
+  liveVoiceModelForPersona,
 } from "@/lib/live-voice-config";
 import type { ChatMessage } from "@/lib/types";
 
@@ -76,6 +76,8 @@ export async function POST(request: Request) {
   const now = Date.now();
   const expireTime = new Date(now + 15 * 60 * 1000).toISOString();
   const newSessionExpireTime = new Date(now + 90 * 1000).toISOString();
+  const liveModel = liveVoiceModelForPersona(personaId);
+  const isGemini25NativeAudio = liveModel.startsWith("gemini-2.5-flash-native-audio");
 
   try {
     const token = await ai.authTokens.create({
@@ -85,16 +87,18 @@ export async function POST(request: Request) {
         expireTime,
         newSessionExpireTime,
         liveConnectConstraints: {
-          model: LIVE_VOICE_MODEL,
+          model: liveModel,
           config: {
             responseModalities: [Modality.AUDIO],
             outputAudioTranscription: {},
-            temperature: 0.55,
+            temperature: 0.5,
             topP: 0.9,
             maxOutputTokens: 512,
-            thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
+            ...(isGemini25NativeAudio ? {} : {
+              thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
+            }),
             speechConfig: {
-              languageCode: "ja-JP",
+              ...(isGemini25NativeAudio ? {} : { languageCode: "ja-JP" }),
               voiceConfig: {
                 prebuiltVoiceConfig: {
                   voiceName: LIVE_VOICE_BY_PERSONA[personaId] ?? "Zephyr",
@@ -111,7 +115,7 @@ export async function POST(request: Request) {
 
     return Response.json({
       token: token.name,
-      model: LIVE_VOICE_MODEL,
+      model: liveModel,
       contextKey: liveVoiceContextKey(context),
       expireTime,
       newSessionExpireTime,
@@ -125,6 +129,7 @@ export async function POST(request: Request) {
     console.info(JSON.stringify({
       metric: "live_v2_token",
       personaId,
+      model: liveModel,
       status: "error",
       errorName: error instanceof Error ? error.name : "unknown",
     }));
