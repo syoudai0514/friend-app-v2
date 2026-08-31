@@ -33,14 +33,15 @@ test("Shizuku Live instruction is cute soft gyaru and excludes hidden metadata",
         performance: { version: 1, expression: "happy", motionCue: "lean_in" },
       },
     ],
-    memories: ["好きな飲み物はコーヒー", "SECRET_MEMORY_A", "SECRET_MEMORY_B", "直近の約束"],
+    memories: ["OLD_MEMORY_NOT_SENT", "好きな飲み物はコーヒー", "最近よく眠れていない", "直近の約束"],
   });
 
   assert.match(instruction, /ゆるふわ/);
   assert.match(instruction, /ギャル/);
   assert.doesNotMatch(instruction, /SECRET_NARRATION/);
   assert.doesNotMatch(instruction, /lean_in/);
-  assert.doesNotMatch(instruction, /SECRET_MEMORY_A/);
+  assert.doesNotMatch(instruction, /OLD_MEMORY_NOT_SENT/);
+  assert.match(instruction, /好きな飲み物はコーヒー/);
   assert.match(instruction, /直近の約束/);
 });
 
