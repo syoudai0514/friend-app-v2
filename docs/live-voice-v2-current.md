@@ -18,4 +18,9 @@ This document records the intended CURRENT Live Voice V2 voice-casting state use
 - Hinata: `Leda`
 - Rena: `Gacrux`
 
+## Production release retry
+
+- 2026-09-01 JST: retry Production release after the prior Vercel Hobby build-rate-limit window.
+- Canonical source remains `main`; no runtime behavior change is introduced by this release note update.
+
 Canonical implementation remains `src/lib/live-voice-config.ts`; this document is a release-facing snapshot and must not override code.
