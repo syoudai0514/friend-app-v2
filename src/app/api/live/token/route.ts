@@ -94,7 +94,7 @@ export async function POST(request: Request) {
             maxOutputTokens: 512,
             thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
             speechConfig: {
-              languageCode: "ja",
+              languageCode: "ja-JP",
               voiceConfig: {
                 prebuiltVoiceConfig: {
                   voiceName: LIVE_VOICE_BY_PERSONA[personaId] ?? "Zephyr",
@@ -113,8 +113,8 @@ export async function POST(request: Request) {
       token: token.name,
       model: LIVE_VOICE_MODEL,
       contextKey: liveVoiceContextKey(context),
-      expireTime: token.expireTime ?? expireTime,
-      newSessionExpireTime: token.newSessionExpireTime ?? newSessionExpireTime,
+      expireTime,
+      newSessionExpireTime,
     }, {
       headers: {
         "Cache-Control": "private, no-store",
