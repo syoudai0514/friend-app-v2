@@ -10,15 +10,15 @@ import {
 const shizuku = PRESETS.find((entry) => entry.persona.id === "shizuku")?.persona;
 assert.ok(shizuku);
 
-test("Live Voice V2 uses the first audition casting", () => {
+test("Live Voice V2 uses the current character casting", () => {
   assert.equal(LIVE_VOICE_BY_PERSONA.aimi, "Zephyr");
-  assert.equal(LIVE_VOICE_BY_PERSONA.shizuku, "Aoede");
+  assert.equal(LIVE_VOICE_BY_PERSONA.shizuku, "Achernar");
   assert.equal(LIVE_VOICE_BY_PERSONA.nagi, "Kore");
   assert.equal(LIVE_VOICE_BY_PERSONA.hinata, "Leda");
   assert.equal(LIVE_VOICE_BY_PERSONA.rena, "Gacrux");
 });
 
-test("Shizuku Live instruction is cute soft gyaru and excludes hidden metadata", () => {
+test("Shizuku Live instruction is cute soft moe gyaru and excludes hidden metadata", () => {
   const instruction = buildLiveVoiceSystemInstruction({
     persona: shizuku,
     userName: "せんぱい",
@@ -36,8 +36,10 @@ test("Shizuku Live instruction is cute soft gyaru and excludes hidden metadata",
     memories: ["OLD_MEMORY_NOT_SENT", "好きな飲み物はコーヒー", "最近よく眠れていない", "直近の約束"],
   });
 
+  assert.match(instruction, /萌え系/);
   assert.match(instruction, /ゆるふわ/);
   assert.match(instruction, /ギャル/);
+  assert.match(instruction, /少し高め/);
   assert.doesNotMatch(instruction, /SECRET_NARRATION/);
   assert.doesNotMatch(instruction, /lean_in/);
   assert.doesNotMatch(instruction, /OLD_MEMORY_NOT_SENT/);
