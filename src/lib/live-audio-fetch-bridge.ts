@@ -1,7 +1,7 @@
 "use client";
 
 const MAX_INLINE_AUDIO_BASE64 = 4_000_000;
-const MAX_CACHE_ENTRIES = 12;
+const MAX_CACHE_ENTRIES = 24;
 
 interface LiveAudioEnvelope {
   type?: unknown;
@@ -12,6 +12,7 @@ interface LiveAudioEnvelope {
 
 interface DecodedLiveAudio {
   key: string;
+  speechKey: string;
   blob: Blob;
 }
 
@@ -35,11 +36,16 @@ export function liveAudioCacheKey(
   emotionIntensity: number | null | undefined,
 ): string {
   return JSON.stringify([
+    "intent",
     personaId,
     speech,
     style ?? "neutral",
     typeof emotionIntensity === "number" ? emotionIntensity : null,
   ]);
+}
+
+export function liveAudioSpeechKey(personaId: string, speech: string): string {
+  return JSON.stringify(["speech", personaId, speech]);
 }
 
 function wavHeaderLooksValid(bytes: Uint8Array): boolean {
@@ -72,6 +78,7 @@ export function decodeLiveAudioEnvelope(value: unknown, personaId: string): Deco
     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
     return {
       key: liveAudioCacheKey(personaId, turn.speech, style, emotionIntensity),
+      speechKey: liveAudioSpeechKey(personaId, turn.speech),
       blob: new Blob([buffer], { type: "audio/wav" }),
     };
   } catch {
@@ -104,12 +111,15 @@ function personaIdFromChatRequest(init?: RequestInit): string | null {
   return typeof persona?.id === "string" && persona.id ? persona.id : null;
 }
 
-function ttsKeyFromRequest(init?: RequestInit): string | null {
+function ttsKeysFromRequest(init?: RequestInit): { key: string; speechKey: string } | null {
   const body = jsonBody(init?.body);
   if (!body || typeof body.personaId !== "string" || typeof body.speech !== "string") return null;
   const style = typeof body.style === "string" ? body.style : "neutral";
   const emotionIntensity = typeof body.emotionIntensity === "number" ? body.emotionIntensity : null;
-  return liveAudioCacheKey(body.personaId, body.speech, style, emotionIntensity);
+  return {
+    key: liveAudioCacheKey(body.personaId, body.speech, style, emotionIntensity),
+    speechKey: liveAudioSpeechKey(body.personaId, body.speech),
+  };
 }
 
 function remember(cache: Map<string, Blob>, key: string, blob: Blob) {
@@ -136,7 +146,10 @@ function wrapChatResponse(response: Response, personaId: string, cache: Map<stri
       if (!line) continue;
       try {
         const decoded = decodeLiveAudioEnvelope(JSON.parse(line), personaId);
-        if (decoded) remember(cache, decoded.key, decoded.blob);
+        if (decoded) {
+          remember(cache, decoded.key, decoded.blob);
+          remember(cache, decoded.speechKey, decoded.blob);
+        }
       } catch {
         // Non-audio dialogue events continue through the normal parser unchanged.
       }
@@ -152,7 +165,10 @@ function wrapChatResponse(response: Response, personaId: string, cache: Map<stri
         if (buffer.trim()) {
           try {
             const decoded = decodeLiveAudioEnvelope(JSON.parse(buffer), personaId);
-            if (decoded) remember(cache, decoded.key, decoded.blob);
+            if (decoded) {
+              remember(cache, decoded.key, decoded.blob);
+              remember(cache, decoded.speechKey, decoded.blob);
+            }
           } catch {
             // Ignore incomplete trailing diagnostic data.
           }
@@ -196,8 +212,8 @@ export function installLiveAudioFetchBridge(): () => void {
     const path = requestPath(input);
 
     if (path === "/api/tts") {
-      const key = ttsKeyFromRequest(init);
-      const blob = key ? cache.get(key) : undefined;
+      const keys = ttsKeysFromRequest(init);
+      const blob = keys ? cache.get(keys.key) ?? cache.get(keys.speechKey) : undefined;
       if (blob) {
         return new Response(blob, {
           status: 200,
