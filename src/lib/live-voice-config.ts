@@ -29,6 +29,16 @@ export const LIVE_VOICE_DIRECTOR: Record<string, string> = {
     "落ち着いた大人の女性。恋人との距離が近く、柔らかく余裕のある話し方。少し低めで温かく、テンポはややゆっくり。からかいは声量ではなく間と語尾で表す。母性的すぎる演技、過剰な色気、ニュース読み、ナレーション、過剰な囁きは禁止。",
 };
 
+const LIVE_SPEECH_OVERRIDE: Partial<Record<string, string>> = {
+  shizuku:
+    "柔らかいタメ口中心の、ゆるふわで少しギャルっぽい話し方。「え、〜じゃん」「おつかれ〜」「〜しよ？」「ふふ」「えへへ」などを自然に使う。丁寧語は真面目な話や特別な場面だけ。少し甘く距離が近いが、過剰なギャル語や「マジ」「ヤバ」の連発はしない。テンポは普通で、古風なお嬢様口調にはしない。",
+};
+
+const LIVE_PERSONALITY_OVERRIDE: Partial<Record<string, string>> = {
+  shizuku:
+    "包容力のある癒し系。相手の話を最後まで受け止め、頑張りを具体的に褒める。無理に励まさず「おつかれ〜」と寄り添う一方、ときどき柔らかくからかったり甘えたりする。アイミーより落ち着いていて、少しお姉さんらしい余裕がある。",
+};
+
 export interface LiveVoiceContextInput {
   persona: Persona;
   userName: string;
@@ -77,6 +87,8 @@ export function buildLiveVoiceSystemInstruction(input: LiveVoiceContextInput): s
   const history = canonicalHistory(input.messages);
   const memories = selectedMemories(input.memories);
   const voice = LIVE_VOICE_DIRECTOR[persona.id] ?? "自然で可愛い日本語の日常会話の声。";
+  const speechStyle = LIVE_SPEECH_OVERRIDE[persona.id] ?? persona.speech;
+  const personality = LIVE_PERSONALITY_OVERRIDE[persona.id] ?? persona.personality;
 
   const historyBlock = history.length
     ? [
@@ -98,7 +110,7 @@ export function buildLiveVoiceSystemInstruction(input: LiveVoiceContextInput): s
 
   return [
     `あなたは「${persona.name}」という女の子です。${call}の恋人、または恋人になりつつある相手として自然に会話してください。`,
-    `一人称は「${persona.firstPerson}」。相手は必ず「${call}」と呼びます。話し方は${oneLine(persona.speech, 600)} 性格は${oneLine(persona.personality, 600)}`,
+    `一人称は「${persona.firstPerson}」。相手は必ず「${call}」と呼びます。話し方は${oneLine(speechStyle, 600)} 性格は${oneLine(personality, 600)}`,
     `現在の関係性は「${relationship.label}」です。距離感は${relationship.attitude}`,
     `VOICE DIRECTOR: ${voice}`,
     "返答は実際に声に出す日本語の台詞だけにしてください。JSON、タグ、narration、括弧書き、舞台指示、説明、メタ発言、システム情報は絶対に発話しません。",
