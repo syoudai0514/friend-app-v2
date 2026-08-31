@@ -4,17 +4,21 @@ This document records the intended CURRENT Live Voice V2 voice-casting state use
 
 ## Shizuku
 
-- Gemini Live model: `gemini-2.5-flash-native-audio-preview-12-2025`
-- Gemini Live prebuilt voice: `Achernar` (`Soft`)
-- target: adult (20s) cute romantic partner / anime-romance heroine
-- soft, sweet, rounded delivery instead of bright or crisp delivery
-- slightly slower pace with gentle phrase endings
-- close-distance delivery with occasional natural breathiness and small pauses
-- subtle sensuality as a baseline nuance, without childlike voice or exaggerated moaning/whispering
-- keeps a light yurufuwa-gyaru flavor while prioritizing intimate girlfriend warmth
-- explicit prohibition on announcer, service-staff, sporty, or overly articulate delivery
+- primary voice engine: browser-local `Piper Plus` + Tsukuyomi-chan ONNX
+- pinned model: `ayousanz/piper-plus-tsukuyomi-chan` revision `36b59c825c36bd386b8960cf3f604382f52f2a87`
+- model: `tsukuyomi-chan-6lang-fp16.onnx` (about 38 MB, 22050 Hz)
+- dependencies: `piper-plus@0.6.0` + `onnxruntime-web@1.24.3`
+- first use downloads the voice model automatically; later sessions reuse IndexedDB
+- speech synthesis runs in the browser; Shizuku dialogue text is not sent to an external TTS service
+- Gemini Live direct audio is bypassed for Shizuku; canonical dialogue still comes from the existing `/api/chat` transaction path
+- if local inference fails, the existing `/api/tts` path remains a safe fallback
+- target persona: adult woman in her 20s, sweet close-distance girlfriend style, soft tameguchi, subtle sensual warmth, never childlike
 
-Why the model differs from the other personas: recent Gemini 3.1 Flash Live + ephemeral-token reports show `prebuiltVoiceConfig.voiceName` can be ignored, while native-audio Live models are the documented voice-selectable path. Shizuku is temporarily pinned to the 2.5 native-audio preview so the selected voice color can actually be auditioned.
+The local architecture follows the CURRENT ManaEvo implementation: dynamic Piper/ORT loading, iOS single-threaded WASM, local model caching, and short-chunk inference to control memory pressure.
+
+### Attribution / license note
+
+The voice model is trained from the Tsukuyomi-chan corpus (CV: Rei Yumesaki). Before any public distribution beyond this private PoC, keep the required corpus attribution and usage restrictions visible in the product/release materials and re-check the current upstream terms.
 
 ## Other personas
 
@@ -25,7 +29,6 @@ Why the model differs from the other personas: recent Gemini 3.1 Flash Live + ep
 
 ## Production release retry
 
-- 2026-09-01 JST: retry Production release after the prior Vercel Hobby build-rate-limit window.
-- Canonical source remains `main`; no runtime behavior change is introduced by this release note update.
+- 2026-09-01 JST: Vercel Hobby build-rate-limit window cleared and Production releases resumed.
 
-Canonical implementation remains `src/lib/live-voice-config.ts`; this document is a release-facing snapshot and must not override code.
+Canonical runtime implementation is split between `src/lib/live-audio-fetch-bridge.ts` for Gemini Live personas and `src/lib/tsukuyomi-local-tts.js` / `src/lib/shizuku-tsukuyomi-bridge.js` for Shizuku.
