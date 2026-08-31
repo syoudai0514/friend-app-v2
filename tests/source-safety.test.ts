@@ -41,12 +41,13 @@ test("generation does not drive lip sync and narration precedes model speech UI"
   assert.ok(narrationAt >= 0 && narrationAt < nameAt && nameAt < speechAt);
 });
 
-test("chat wrapper installs the Live audio fetch bridge without changing persistent state", () => {
+test("chat wrapper installs the Live audio bridge without changing persistent state", () => {
   const wrapper = source("src/app/chat/page.tsx");
   const bridge = source("src/lib/live-audio-fetch-bridge.ts");
   assert.match(wrapper, /installLiveAudioFetchBridge/);
+  assert.match(wrapper, /primeLiveVoiceSession/);
   assert.match(bridge, /path === "\/api\/tts"/);
-  assert.match(bridge, /"X-TTS-Provider": "gemini-live-chat"/);
+  assert.match(bridge, /gemini-live-v2-(?:already-played|cache)/);
   assert.doesNotMatch(bridge, /localStorage|sessionStorage/);
 });
 
