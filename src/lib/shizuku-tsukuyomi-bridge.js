@@ -77,8 +77,17 @@ async function bridgedFetch(previousFetch, input, init) {
       });
     } catch (error) {
       if (init?.signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) throw error;
-      // ローカル推論だけが失敗した時は既存 Gemini TTS へ安全にフォールバックする。
-      return previousFetch(input, init);
+      // しずくは「つくよみちゃん」と明示しているため、別providerへ黙って切替しない。
+      // ローカル生成に失敗した場合は失敗として返し、違う声をつくよみちゃん扱いしない。
+      console.error("[shizuku-tsukuyomi] local synthesis failed", error);
+      return new Response(JSON.stringify({ error: "TSUKUYOMI_LOCAL_TTS_FAILED" }), {
+        status: 503,
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+          "X-Voice-Provider": "piper-tsukuyomi-local-error",
+        },
+      });
     }
   }
 
