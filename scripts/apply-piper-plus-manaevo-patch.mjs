@@ -15,13 +15,6 @@ let index = readFileSync(INDEX_PATH, "utf8");
 
 index = replaceOnce(
   index,
-  "     * @param {Object} [options.ort] - onnxruntime-web instance.  When omitted\n     *   the global `globalThis.ort` is used.\n     * @param {Function} [options.onProgress] - Progress callback receiving",
-  "     * @param {Object} [options.ort] - onnxruntime-web instance.  When omitted\n     *   the global `globalThis.ort` is used.\n     * @param {Object} [options.modelConfig] - Already-cached Piper model config.\n     * @param {Function} [options.onProgress] - Progress callback receiving",
-  "modelConfig docs",
-);
-
-index = replaceOnce(
-  index,
   "      progress({ stage: 'model', progress: 0.1, message: 'Downloading config...' });\n      let configResponse = await fetch(configUrl);\n      if (!configResponse.ok && configResponse.status === 404 && configFallbackUrl) {\n        configResponse = await fetch(configFallbackUrl);\n      }\n      if (!configResponse.ok) {\n        throw new Error(`Failed to fetch config: ${configResponse.status} ${configResponse.statusText}`);\n      }\n      this._config = await configResponse.json();",
   "      progress({ stage: 'model', progress: 0.1, message: 'Loading config...' });\n      // ManaEvo parity: reuse the config cached with the exact ONNX revision.\n      if (options.modelConfig) {\n        this._config = options.modelConfig;\n      } else {\n        let configResponse = await fetch(configUrl);\n        if (!configResponse.ok && configResponse.status === 404 && configFallbackUrl) {\n          configResponse = await fetch(configFallbackUrl);\n        }\n        if (!configResponse.ok) {\n          throw new Error(`Failed to fetch config: ${configResponse.status} ${configResponse.statusText}`);\n        }\n        this._config = await configResponse.json();\n      }",
   "cached model config",
