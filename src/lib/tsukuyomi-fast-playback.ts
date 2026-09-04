@@ -100,6 +100,7 @@ async function playBlobToEnd(
   key: string,
   blob: Blob,
   options: { delayMs?: number; requestStartedAt?: number },
+  onStarted?: () => void,
 ): Promise<boolean> {
   let sawPlaying = false;
   let settled = false;
@@ -127,6 +128,7 @@ async function playBlobToEnd(
     unsubscribe();
     return false;
   }
+  onStarted?.();
   return ended;
 }
 
@@ -160,15 +162,24 @@ export async function playTsukuyomiFast({
 
     throwIfAborted(signal);
     const startedAt = performance.now();
-    const played = await playBlobToEnd(session, `${cacheKey}:chunk:${index}`, blob, {
-      delayMs: index === 0 ? delayMs : 0,
-      requestStartedAt: index === 0 ? startedAt : undefined,
-    });
+    const played = await playBlobToEnd(
+      session,
+      `${cacheKey}:chunk:${index}`,
+      blob,
+      {
+        delayMs: index === 0 ? delayMs : 0,
+        requestStartedAt: index === 0 ? startedAt : undefined,
+      },
+      index === 0
+        ? () => {
+            playedAny = true;
+            onFirstAudio?.();
+          }
+        : () => {
+            playedAny = true;
+          },
+    );
     if (!played) return { played: playedAny, blobs };
-    if (!playedAny) {
-      playedAny = true;
-      onFirstAudio?.();
-    }
   }
 
   return { played: playedAny, blobs };
