@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   firstStableTsukuyomiChunk,
   splitTsukuyomiForFastPlayback,
@@ -24,4 +26,18 @@ test("long speech without punctuation gets a bounded first chunk", () => {
   assert.ok(first);
   assert.ok(first.endsWith("、"));
   assert.ok(first.length <= 25);
+});
+
+test("next Tsukuyomi chunk is prefetched before current playback finishes", () => {
+  const source = readFileSync(
+    join(process.cwd(), "src/lib/tsukuyomi-fast-playback.ts"),
+    "utf8",
+  );
+  const nextIndexAt = source.indexOf("const nextIndex = index + 1");
+  const prefetchAt = source.indexOf("prefetched = chunkBlobPromise", nextIndexAt);
+  const playbackAt = source.indexOf("const played = await playBlobToEnd", prefetchAt);
+  assert.ok(nextIndexAt >= 0);
+  assert.ok(prefetchAt > nextIndexAt);
+  assert.ok(playbackAt > prefetchAt);
+  assert.match(source, /Keep at most one inference ahead/);
 });
