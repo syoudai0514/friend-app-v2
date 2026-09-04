@@ -10,6 +10,12 @@ import { performanceRuntime } from "@/lib/performance";
 import { idleLine } from "@/lib/prompt";
 import { useSpeechInput } from "@/lib/speech";
 import { useStore } from "@/lib/store";
+import {
+  isTsukuyomiPersona,
+  playTsukuyomiFast,
+  prepareTsukuyomiFirstChunk,
+  type PreparedTsukuyomiChunk,
+} from "@/lib/tsukuyomi-fast-playback";
 import type { ChatMessage, ModelTurn, TurnDraft } from "@/lib/types";
 
 function newTurnId(): string {
@@ -57,9 +63,13 @@ export default function ChatPage() {
   const ttsAbort = useRef<AbortController | null>(null);
   const audioRequestSerial = useRef(0);
   const autoplayTurns = useRef(new Set<string>());
+  const turnStartedAt = useRef(new Map<string, number>());
+  const shizukuDraftSpeech = useRef(new Map<string, string>());
+  const preparedTsukuyomiFirst = useRef(new Map<string, PreparedTsukuyomiChunk>());
   const personaId = useRef(state.persona.id);
   const audio = useRef<AudioSessionController | null>(null);
   const audioCache = useRef(new Map<string, Blob>());
+  const tsukuyomiAudioCache = useRef(new Map<string, Blob[]>());
 
   if (!audio.current && typeof window !== "undefined") {
     audio.current = new AudioSessionController();
@@ -78,7 +88,12 @@ export default function ChatPage() {
     generationAbort.current?.abort();
     generationAbort.current = null;
     activeTurnId.current = null;
-    if (invalidatedTurnId) pendingCanonicalTurns.current.delete(invalidatedTurnId);
+    if (invalidatedTurnId) {
+      pendingCanonicalTurns.current.delete(invalidatedTurnId);
+      turnStartedAt.current.delete(invalidatedTurnId);
+      shizukuDraftSpeech.current.delete(invalidatedTurnId);
+      preparedTsukuyomiFirst.current.delete(invalidatedTurnId);
+    }
     if (commitPendingTurnId.current === invalidatedTurnId) commitPendingTurnId.current = null;
     setTurnDraft(null);
     setBusy(false);
@@ -151,7 +166,12 @@ export default function ChatPage() {
   }, [state.messages, turnDraft]);
 
   const playMessage = useCallback(
-    async (message: ChatMessage, index: number, mode: "manual" | "autoplay" = "manual") => {
+    async (
+      message: ChatMessage,
+      index: number,
+      mode: "manual" | "autoplay" = "manual",
+      sourceTurnId?: string,
+    ) => {
       const session = audio.current;
       if (!session || !state.voice.enabled || message.role !== "model" || !message.text.trim()) return;
       const requestedPersonaId = state.persona.id;
@@ -167,6 +187,45 @@ export default function ChatPage() {
       session.stop();
 
       const key = audioCacheKey(requestedPersonaId, message);
+
+      if (isTsukuyomiPersona(requestedPersonaId)) {
+        const preparedFirst = sourceTurnId
+          ? preparedTsukuyomiFirst.current.get(sourceTurnId)
+          : undefined;
+        const sentAt = sourceTurnId ? turnStartedAt.current.get(sourceTurnId) : undefined;
+        const cachedBlobs = tsukuyomiAudioCache.current.get(key);
+        try {
+          const result = await playTsukuyomiFast({
+            session,
+            speech: message.text,
+            cacheKey: `${key}:${index}`,
+            signal: controller.signal,
+            preparedFirst,
+            cachedBlobs,
+            delayMs: performanceRuntime(message.performance).pauseMs,
+            onFirstAudio: () => {
+              if (typeof sentAt !== "number") return;
+              console.info(JSON.stringify({
+                metric: "turn_to_first_audio",
+                personaId: requestedPersonaId,
+                sampleMs: Math.max(0, Math.round(performance.now() - sentAt)),
+              }));
+            },
+          });
+          if (result.blobs.length) tsukuyomiAudioCache.current.set(key, result.blobs);
+          if (!result.played && serial === audioRequestSerial.current && mode === "manual") {
+            setAudioError("音声を再生できませんでした。もう一度🔊を押してください");
+          }
+        } catch (error) {
+          if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) return;
+          if (serial === audioRequestSerial.current) {
+            setAudioError("つくよみちゃんの音声を生成できませんでした");
+            session.stop();
+          }
+        }
+        return;
+      }
+
       let blob = audioCache.current.get(key);
       let requestStartedAt: number | undefined;
 
@@ -283,6 +342,12 @@ export default function ChatPage() {
     activeTurnId.current = null;
     setBusy(false);
 
+    const cleanupTurnRuntime = () => {
+      turnStartedAt.current.delete(commitAck.turnId);
+      shizukuDraftSpeech.current.delete(commitAck.turnId);
+      preparedTsukuyomiFirst.current.delete(commitAck.turnId);
+    };
+
     const canonicalMessage = state.messages[commitAck.messageIndex];
     if (
       canonicalMessage?.role === "model" &&
@@ -291,7 +356,10 @@ export default function ChatPage() {
       !autoplayTurns.current.has(commitAck.turnId)
     ) {
       autoplayTurns.current.add(commitAck.turnId);
-      void playMessage(canonicalMessage, commitAck.messageIndex, "autoplay");
+      void playMessage(canonicalMessage, commitAck.messageIndex, "autoplay", commitAck.turnId)
+        .finally(cleanupTurnRuntime);
+    } else {
+      cleanupTurnRuntime();
     }
   }, [
     clearCommitAck,
@@ -317,6 +385,8 @@ export default function ChatPage() {
       const controller = new AbortController();
       activeTurnId.current = turnId;
       generationAbort.current = controller;
+      turnStartedAt.current.set(turnId, performance.now());
+      if (isTsukuyomiPersona(state.persona.id)) shizukuDraftSpeech.current.set(turnId, "");
       const userMessage: ChatMessage = { role: "user", text, at: Date.now() };
       const history = [...state.messages, userMessage];
 
@@ -366,6 +436,8 @@ export default function ChatPage() {
             if (event.type === "turn_started") {
               // structured retry / legacy fallbackごとにpreviewを完全resetする。
               setTurnDraft({ turnId, speech: "" });
+              shizukuDraftSpeech.current.set(turnId, "");
+              preparedTsukuyomiFirst.current.delete(turnId);
             } else if (event.type === "performance_preview") {
               setTurnDraft((draft) =>
                 draft?.turnId === turnId ? { ...draft, performance: event.performance } : draft,
@@ -375,6 +447,18 @@ export default function ChatPage() {
                 draft?.turnId === turnId ? { ...draft, narration: event.narration } : draft,
               );
             } else if (event.type === "speech_delta") {
+              if (
+                isTsukuyomiPersona(state.persona.id) &&
+                state.voice.enabled &&
+                state.voice.autoplay
+              ) {
+                const nextSpeech = `${shizukuDraftSpeech.current.get(turnId) ?? ""}${event.text}`;
+                shizukuDraftSpeech.current.set(turnId, nextSpeech);
+                if (!preparedTsukuyomiFirst.current.has(turnId)) {
+                  const prepared = prepareTsukuyomiFirstChunk(nextSpeech, controller.signal);
+                  if (prepared) preparedTsukuyomiFirst.current.set(turnId, prepared);
+                }
+              }
               setTurnDraft((draft) =>
                 draft?.turnId === turnId
                   ? { ...draft, speech: `${draft.speech}${event.text}` }
@@ -384,6 +468,15 @@ export default function ChatPage() {
               setChatError(event.message);
               invalidateGeneration();
             } else if (event.type === "turn_complete") {
+              if (
+                isTsukuyomiPersona(state.persona.id) &&
+                state.voice.enabled &&
+                state.voice.autoplay &&
+                !preparedTsukuyomiFirst.current.has(turnId)
+              ) {
+                const prepared = prepareTsukuyomiFirstChunk(event.turn.speech, controller.signal);
+                if (prepared) preparedTsukuyomiFirst.current.set(turnId, prepared);
+              }
               commitTurn(turnId, event.turn);
             }
           }
