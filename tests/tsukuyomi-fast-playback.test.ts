@@ -9,7 +9,7 @@ test("fast Tsukuyomi playback can start at the first natural pause", () => {
   assert.equal(firstStableTsukuyomiChunk("おつかれ〜。今日はどうだった？"), "おつかれ〜。");
   assert.deepEqual(
     splitTsukuyomiForFastPlayback("おつかれ〜。今日はどうだった？"),
-    ["おつかれ〜。", "今日はどうだった？"],
+    ["おつかれ〜。", "今日はどうだった?"],
   );
 });
 
