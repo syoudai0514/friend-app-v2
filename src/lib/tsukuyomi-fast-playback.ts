@@ -193,11 +193,12 @@ export async function playTsukuyomiFast({
       if (index < cacheLimit) retainedBlobs[index] = blob;
       throwIfAborted(pipelineAbort.signal);
 
-      // Keep at most one inference ahead. On iPhone this overlaps the expensive local
-      // Piper synthesis with the chunk that is currently audible, without synthesizing
-      // the whole answer at once or allowing unbounded concurrent ONNX work.
       const nextIndex = index + 1;
-      if (nextIndex < chunks.length) {
+      const beginPrefetch = () => {
+        // Start exactly one chunk ahead only after the current audio has really begun.
+        // This avoids delaying first sound with main-thread WASM work while still hiding
+        // most of the next local-inference cost behind audible playback.
+        if (nextIndex >= chunks.length || prefetched) return;
         prefetched = chunkBlobPromise(
           chunks,
           retainedBlobs,
@@ -205,7 +206,12 @@ export async function playTsukuyomiFast({
           preparedFirst,
           pipelineAbort.signal,
         );
-      }
+      };
+      const onChunkStarted = () => {
+        beginPrefetch();
+        playedAny = true;
+        if (index === 0) onFirstAudio?.();
+      };
 
       const startedAt = performance.now();
       const played = await playBlobToEnd(
@@ -216,14 +222,7 @@ export async function playTsukuyomiFast({
           delayMs: index === 0 ? delayMs : 0,
           requestStartedAt: index === 0 ? startedAt : undefined,
         },
-        index === 0
-          ? () => {
-              playedAny = true;
-              onFirstAudio?.();
-            }
-          : () => {
-              playedAny = true;
-            },
+        onChunkStarted,
       );
       if (!played) {
         pipelineAbort.abort();
