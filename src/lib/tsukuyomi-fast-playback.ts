@@ -85,8 +85,6 @@ export function prepareTsukuyomiFirstChunk(
   const text = firstStableTsukuyomiChunk(partialText);
   if (!text) return null;
   const blob = synthesizeTsukuyomiSpeech(text, { signal });
-  // A retry/abort can make the speculative result unused. Attach a handler so that
-  // a discarded provisional synthesis never becomes an unhandled rejection.
   void blob.catch(() => undefined);
   return { text, blob };
 }
@@ -132,6 +130,21 @@ async function playBlobToEnd(
   return ended;
 }
 
+function chunkBlobPromise(
+  chunks: string[],
+  blobs: Blob[],
+  index: number,
+  preparedFirst: PreparedTsukuyomiChunk | undefined,
+  signal: AbortSignal,
+): Promise<Blob> {
+  const cached = blobs[index];
+  if (cached) return Promise.resolve(cached);
+  if (index === 0 && preparedFirst?.text === chunks[0]) return preparedFirst.blob;
+  const promise = synthesizeTsukuyomiSpeech(chunks[index], { signal });
+  void promise.catch(() => undefined);
+  return promise;
+}
+
 export async function playTsukuyomiFast({
   session,
   speech,
@@ -146,43 +159,75 @@ export async function playTsukuyomiFast({
   const chunks = splitTsukuyomiForFastPlayback(speech);
   if (!chunks.length) return { played: false, blobs: [] };
 
+  const pipelineAbort = new AbortController();
+  const forwardAbort = () => pipelineAbort.abort();
+  if (signal?.aborted) pipelineAbort.abort();
+  else signal?.addEventListener("abort", forwardAbort, { once: true });
+
   const blobs = [...cachedBlobs];
   let playedAny = false;
+  let prefetched: Promise<Blob> | null = null;
 
-  for (let index = 0; index < chunks.length; index += 1) {
-    throwIfAborted(signal);
-    session.beginLoading();
+  try {
+    for (let index = 0; index < chunks.length; index += 1) {
+      throwIfAborted(pipelineAbort.signal);
+      session.beginLoading();
 
-    let blob = blobs[index];
-    if (!blob) {
-      if (index === 0 && preparedFirst?.text === chunks[0]) blob = await preparedFirst.blob;
-      else blob = await synthesizeTsukuyomiSpeech(chunks[index], { signal });
+      const currentPromise = prefetched ?? chunkBlobPromise(
+        chunks,
+        blobs,
+        index,
+        preparedFirst,
+        pipelineAbort.signal,
+      );
+      prefetched = null;
+
+      const blob = await currentPromise;
       blobs[index] = blob;
+      throwIfAborted(pipelineAbort.signal);
+
+      // Keep at most one inference ahead. On iPhone this overlaps the expensive local
+      // Piper synthesis with the chunk that is currently audible, without synthesizing
+      // the whole answer at once or allowing unbounded concurrent ONNX work.
+      const nextIndex = index + 1;
+      if (nextIndex < chunks.length) {
+        prefetched = chunkBlobPromise(
+          chunks,
+          blobs,
+          nextIndex,
+          preparedFirst,
+          pipelineAbort.signal,
+        );
+      }
+
+      const startedAt = performance.now();
+      const played = await playBlobToEnd(
+        session,
+        `${cacheKey}:chunk:${index}`,
+        blob,
+        {
+          delayMs: index === 0 ? delayMs : 0,
+          requestStartedAt: index === 0 ? startedAt : undefined,
+        },
+        index === 0
+          ? () => {
+              playedAny = true;
+              onFirstAudio?.();
+            }
+          : () => {
+              playedAny = true;
+            },
+      );
+      if (!played) {
+        pipelineAbort.abort();
+        return { played: playedAny, blobs };
+      }
     }
 
-    throwIfAborted(signal);
-    const startedAt = performance.now();
-    const played = await playBlobToEnd(
-      session,
-      `${cacheKey}:chunk:${index}`,
-      blob,
-      {
-        delayMs: index === 0 ? delayMs : 0,
-        requestStartedAt: index === 0 ? startedAt : undefined,
-      },
-      index === 0
-        ? () => {
-            playedAny = true;
-            onFirstAudio?.();
-          }
-        : () => {
-            playedAny = true;
-          },
-    );
-    if (!played) return { played: playedAny, blobs };
+    return { played: playedAny, blobs };
+  } finally {
+    signal?.removeEventListener("abort", forwardAbort);
   }
-
-  return { played: playedAny, blobs };
 }
 
 export { isTsukuyomiPersona };
