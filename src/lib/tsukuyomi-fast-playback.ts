@@ -46,6 +46,12 @@ function maxChunkChars(): number {
   return isAppleMobileWebKit() ? 18 : 24;
 }
 
+function cachedChunkLimit(): number {
+  // The ONNX model itself is large on iPhone. Keep only enough completed WAVs to make
+  // immediate replay responsive; later chunks are allowed to be garbage-collected.
+  return isAppleMobileWebKit() ? 2 : 4;
+}
+
 export function splitTsukuyomiForFastPlayback(text: string): string[] {
   let remaining = normalizeFastSpeech(text);
   if (!remaining) return [];
@@ -85,8 +91,6 @@ export function prepareTsukuyomiFirstChunk(
   const text = firstStableTsukuyomiChunk(partialText);
   if (!text) return null;
   const blob = synthesizeTsukuyomiSpeech(text, { signal });
-  // A retry/abort can make the speculative result unused. Attach a handler so that
-  // a discarded provisional synthesis never becomes an unhandled rejection.
   void blob.catch(() => undefined);
   return { text, blob };
 }
@@ -132,6 +136,21 @@ async function playBlobToEnd(
   return ended;
 }
 
+function chunkBlobPromise(
+  chunks: string[],
+  cachedBlobs: Blob[],
+  index: number,
+  preparedFirst: PreparedTsukuyomiChunk | undefined,
+  signal: AbortSignal,
+): Promise<Blob> {
+  const cached = cachedBlobs[index];
+  if (cached) return Promise.resolve(cached);
+  if (index === 0 && preparedFirst?.text === chunks[0]) return preparedFirst.blob;
+  const promise = synthesizeTsukuyomiSpeech(chunks[index], { signal });
+  void promise.catch(() => undefined);
+  return promise;
+}
+
 export async function playTsukuyomiFast({
   session,
   speech,
@@ -146,43 +165,75 @@ export async function playTsukuyomiFast({
   const chunks = splitTsukuyomiForFastPlayback(speech);
   if (!chunks.length) return { played: false, blobs: [] };
 
-  const blobs = [...cachedBlobs];
+  const pipelineAbort = new AbortController();
+  const forwardAbort = () => pipelineAbort.abort();
+  if (signal?.aborted) pipelineAbort.abort();
+  else signal?.addEventListener("abort", forwardAbort, { once: true });
+
+  const cacheLimit = cachedChunkLimit();
+  const retainedBlobs = cachedBlobs.slice(0, cacheLimit);
   let playedAny = false;
+  let prefetched: Promise<Blob> | null = null;
 
-  for (let index = 0; index < chunks.length; index += 1) {
-    throwIfAborted(signal);
-    session.beginLoading();
+  try {
+    for (let index = 0; index < chunks.length; index += 1) {
+      throwIfAborted(pipelineAbort.signal);
+      session.beginLoading();
 
-    let blob = blobs[index];
-    if (!blob) {
-      if (index === 0 && preparedFirst?.text === chunks[0]) blob = await preparedFirst.blob;
-      else blob = await synthesizeTsukuyomiSpeech(chunks[index], { signal });
-      blobs[index] = blob;
+      const currentPromise = prefetched ?? chunkBlobPromise(
+        chunks,
+        retainedBlobs,
+        index,
+        preparedFirst,
+        pipelineAbort.signal,
+      );
+      prefetched = null;
+
+      const blob = await currentPromise;
+      if (index < cacheLimit) retainedBlobs[index] = blob;
+      throwIfAborted(pipelineAbort.signal);
+
+      const nextIndex = index + 1;
+      const beginPrefetch = () => {
+        // Start exactly one chunk ahead only after the current audio has really begun.
+        // This avoids delaying first sound with main-thread WASM work while still hiding
+        // most of the next local-inference cost behind audible playback.
+        if (nextIndex >= chunks.length || prefetched) return;
+        prefetched = chunkBlobPromise(
+          chunks,
+          retainedBlobs,
+          nextIndex,
+          preparedFirst,
+          pipelineAbort.signal,
+        );
+      };
+      const onChunkStarted = () => {
+        beginPrefetch();
+        playedAny = true;
+        if (index === 0) onFirstAudio?.();
+      };
+
+      const startedAt = performance.now();
+      const played = await playBlobToEnd(
+        session,
+        `${cacheKey}:chunk:${index}`,
+        blob,
+        {
+          delayMs: index === 0 ? delayMs : 0,
+          requestStartedAt: index === 0 ? startedAt : undefined,
+        },
+        onChunkStarted,
+      );
+      if (!played) {
+        pipelineAbort.abort();
+        return { played: playedAny, blobs: retainedBlobs };
+      }
     }
 
-    throwIfAborted(signal);
-    const startedAt = performance.now();
-    const played = await playBlobToEnd(
-      session,
-      `${cacheKey}:chunk:${index}`,
-      blob,
-      {
-        delayMs: index === 0 ? delayMs : 0,
-        requestStartedAt: index === 0 ? startedAt : undefined,
-      },
-      index === 0
-        ? () => {
-            playedAny = true;
-            onFirstAudio?.();
-          }
-        : () => {
-            playedAny = true;
-          },
-    );
-    if (!played) return { played: playedAny, blobs };
+    return { played: playedAny, blobs: retainedBlobs };
+  } finally {
+    signal?.removeEventListener("abort", forwardAbort);
   }
-
-  return { played: playedAny, blobs };
 }
 
 export { isTsukuyomiPersona };
