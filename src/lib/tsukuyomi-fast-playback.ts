@@ -46,6 +46,12 @@ function maxChunkChars(): number {
   return isAppleMobileWebKit() ? 18 : 24;
 }
 
+function cachedChunkLimit(): number {
+  // The ONNX model itself is large on iPhone. Keep only enough completed WAVs to make
+  // immediate replay responsive; later chunks are allowed to be garbage-collected.
+  return isAppleMobileWebKit() ? 2 : 4;
+}
+
 export function splitTsukuyomiForFastPlayback(text: string): string[] {
   let remaining = normalizeFastSpeech(text);
   if (!remaining) return [];
@@ -132,12 +138,12 @@ async function playBlobToEnd(
 
 function chunkBlobPromise(
   chunks: string[],
-  blobs: Blob[],
+  cachedBlobs: Blob[],
   index: number,
   preparedFirst: PreparedTsukuyomiChunk | undefined,
   signal: AbortSignal,
 ): Promise<Blob> {
-  const cached = blobs[index];
+  const cached = cachedBlobs[index];
   if (cached) return Promise.resolve(cached);
   if (index === 0 && preparedFirst?.text === chunks[0]) return preparedFirst.blob;
   const promise = synthesizeTsukuyomiSpeech(chunks[index], { signal });
@@ -164,7 +170,8 @@ export async function playTsukuyomiFast({
   if (signal?.aborted) pipelineAbort.abort();
   else signal?.addEventListener("abort", forwardAbort, { once: true });
 
-  const blobs = [...cachedBlobs];
+  const cacheLimit = cachedChunkLimit();
+  const retainedBlobs = cachedBlobs.slice(0, cacheLimit);
   let playedAny = false;
   let prefetched: Promise<Blob> | null = null;
 
@@ -175,7 +182,7 @@ export async function playTsukuyomiFast({
 
       const currentPromise = prefetched ?? chunkBlobPromise(
         chunks,
-        blobs,
+        retainedBlobs,
         index,
         preparedFirst,
         pipelineAbort.signal,
@@ -183,7 +190,7 @@ export async function playTsukuyomiFast({
       prefetched = null;
 
       const blob = await currentPromise;
-      blobs[index] = blob;
+      if (index < cacheLimit) retainedBlobs[index] = blob;
       throwIfAborted(pipelineAbort.signal);
 
       // Keep at most one inference ahead. On iPhone this overlaps the expensive local
@@ -193,7 +200,7 @@ export async function playTsukuyomiFast({
       if (nextIndex < chunks.length) {
         prefetched = chunkBlobPromise(
           chunks,
-          blobs,
+          retainedBlobs,
           nextIndex,
           preparedFirst,
           pipelineAbort.signal,
@@ -220,11 +227,11 @@ export async function playTsukuyomiFast({
       );
       if (!played) {
         pipelineAbort.abort();
-        return { played: playedAny, blobs };
+        return { played: playedAny, blobs: retainedBlobs };
       }
     }
 
-    return { played: playedAny, blobs };
+    return { played: playedAny, blobs: retainedBlobs };
   } finally {
     signal?.removeEventListener("abort", forwardAbort);
   }
