@@ -92,6 +92,8 @@ export function CharacterStage({
     (view: StageViewState) => stageViews.set(viewKey, view),
     [viewKey],
   );
+  const markReady = useCallback(() => setVrmStatus("ready"), []);
+  const markError = useCallback(() => setVrmStatus("error"), []);
   const usePhotorealRena = personaId === "rena";
 
   // バリアントが変わったら読み込み状態をリセットする
@@ -131,8 +133,8 @@ export function CharacterStage({
           initialView={initialView}
           onViewChange={rememberView}
           orbitControlsRef={orbitControlsRef}
-          onReady={() => setVrmStatus("ready")}
-          onError={() => setVrmStatus("error")}
+          onReady={markReady}
+          onError={markError}
         />
       ) : (
         <VrmCanvas
@@ -164,8 +166,8 @@ export function CharacterStage({
           performance={performance}
           reducedMotion={reducedMotion}
           orbitControlsRef={orbitControlsRef}
-          onReady={() => setVrmStatus("ready")}
-          onError={() => setVrmStatus("error")}
+          onReady={markReady}
+          onError={markError}
         />
       )}
       {showPoster && (
