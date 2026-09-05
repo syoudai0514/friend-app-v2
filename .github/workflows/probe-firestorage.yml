@@ -14,45 +14,49 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Inspect firestorage download implementation
+      - name: Inspect all firestorage page chunks
         env:
           SHARE_URL: https://firestorage.ai/ja/f/-x0xltPUWqHH
-          CHUNK_URL: https://firestorage.ai/_next/static/chunks/app/(files)/ja/f/page-4d19ae0a4ce39d79.js
         run: |
           set -euo pipefail
           curl -LfsS "$SHARE_URL" -o share.html
-          curl -LfsS "$CHUNK_URL" -o page.js
-          echo '=== chunk size ==='
-          wc -c page.js
-          echo '=== endpoint/string candidates ==='
           python - <<'PY'
-          import re
+          import re, subprocess
           from pathlib import Path
-          text = Path('page.js').read_text('utf-8', errors='ignore')
-          # Print small windows around useful tokens rather than the whole minified bundle.
-          needles = [
-              '/api/', 'download', 'presign', 'signed', 'shareId', 'share_id',
-              'publicId', 'public_id', 'fetch(', 'axios', 'fileName', 'filename',
-              'folder', 'object', 'token', 'expires'
-          ]
-          for needle in needles:
-              print(f'\n=== {needle} ===')
-              start = 0
-              hits = 0
+          html = Path('share.html').read_text('utf-8', errors='ignore')
+          srcs = re.findall(r'<script[^>]+src="([^"]+)"', html)
+          print('scripts', len(srcs))
+          chunks = []
+          for i, src in enumerate(srcs):
+              if not src.startswith('http'):
+                  url = 'https://firestorage.ai' + src
+              else:
+                  url = src
+              out = Path(f'chunk-{i}.js')
+              subprocess.run(['curl','-LfsS',url,'-o',str(out)], check=True)
+              data = out.read_text('utf-8', errors='ignore')
+              chunks.append((url, data))
+              print(i, len(data), url)
+          needles = ['/api/', 'download', 'presign', 'signedurl', 'signed', 'shareid', 'share_id',
+                     'publicid', 'public_id', 'fetch(', 'filename', 'file_name', 'expires', 'token']
+          for url, text in chunks:
               low = text.lower()
-              nlow = needle.lower()
-              while hits < 12:
-                  i = low.find(nlow, start)
-                  if i < 0:
-                      break
-                  print(text[max(0, i-350):i+900])
-                  print('\n---')
-                  start = i + max(1, len(needle))
-                  hits += 1
-          print('\n=== quoted path candidates ===')
-          paths = sorted(set(re.findall(r'[\"\'](\/[^\"\']{2,180})[\"\']', text)))
-          for p in paths:
-              low = p.lower()
-              if any(k in low for k in ['api', 'download', 'share', 'file', 'folder']):
-                  print(p)
+              if not any(n in low for n in needles):
+                  continue
+              print('\n###', url)
+              for needle in needles:
+                  start = 0
+                  hits = 0
+                  while hits < 5:
+                      i = low.find(needle, start)
+                      if i < 0: break
+                      print(f'\n-- {needle} --')
+                      print(text[max(0,i-300):i+900])
+                      start = i + len(needle)
+                      hits += 1
+              paths = sorted(set(re.findall(r'[\"\'](\/[^\"\']{2,220})[\"\']', text)))
+              for p in paths:
+                  pl = p.lower()
+                  if any(k in pl for k in ['api','download','share','file']):
+                      print('PATH', p)
           PY
