@@ -2,7 +2,7 @@
 
 import { OrbitControls } from "@react-three/drei";
 import { Canvas, useThree } from "@react-three/fiber";
-import { useCallback, useEffect, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
@@ -43,9 +43,19 @@ function GlbModel({
 }) {
   const { camera, size: viewportSize } = useThree();
   const [model, setModel] = useState<LoadedModel | null>(null);
+  const onReadyRef = useRef(onReady);
+  const onErrorRef = useRef(onError);
 
-  // GLBの読み込みはURLが変わったときだけ行う。画面回転やReact再描画のたびに
-  // 56MB級モデルを読み直すとiPhoneで破綻するため、カメラ調整とは分離する。
+  useEffect(() => {
+    onReadyRef.current = onReady;
+  }, [onReady]);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
+
+  // GLBの読み込みはURLが変わったときだけ行う。親のstate更新や画面回転のたびに
+  // 56MB級モデルを読み直すとiPhoneで破綻するため、カメラ調整と通知callbackは分離する。
   useEffect(() => {
     let cancelled = false;
     let loadedScene: THREE.Group | null = null;
@@ -80,11 +90,11 @@ function GlbModel({
           size: modelSize,
           target: new THREE.Vector3(0, modelCenter.y, 0),
         });
-        onReady?.();
+        onReadyRef.current?.();
       },
       undefined,
       () => {
-        if (!cancelled) onError?.();
+        if (!cancelled) onErrorRef.current?.();
       },
     );
 
@@ -92,7 +102,7 @@ function GlbModel({
       cancelled = true;
       if (loadedScene) disposeScene(loadedScene);
     };
-  }, [onError, onReady, url]);
+  }, [url]);
 
   // モデル自体は再読込せず、Canvasサイズが変わったときだけ全身が収まるよう再フィットする。
   useEffect(() => {
