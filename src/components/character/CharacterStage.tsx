@@ -11,6 +11,11 @@ import type { StageViewState } from "./stage-view";
 
 // three系はサイズが大きいので、クライアントでしか要らないWebGL部分だけ切り出して遅延読み込みする
 const VrmCanvas = dynamic(() => import("./VrmCanvas").then((m) => m.VrmCanvas), { ssr: false });
+const GlbCanvas = dynamic(() => import("./GlbCanvas").then((m) => m.GlbCanvas), { ssr: false });
+
+// れなのPhotoreal PoC。環境変数を指定すれば外部CDNも試せる。
+// 未指定時はpublic/models/rena/loose.glbを読む。
+const RENA_GLB_URL = process.env.NEXT_PUBLIC_RENA_GLB_URL?.trim() || "/models/rena/loose.glb";
 
 // 各キャラのBody_00_SKINベーステクスチャから抽出した肌色の代表値
 // （肌色ピクセルの中央値。詳細はAGENTS.mdの「実装で分かった落とし穴」を参照）
@@ -53,10 +58,9 @@ function usePrefersReducedMotion(): boolean {
 
 /**
  * 背景＋キャラの表示エリア。
- * フォールバックは VRM → poster画像 → 簡易エラー表示 の一直線。
- * poster画像は読み込み中には出さない（VRMのメタ情報についている顔クローズアップの
- * サムネイルを流用しているだけなので、全身が映るVRMに切り替わった瞬間サイズが
- * 変わって見えてしまうため。VRMが失敗したときの最終手段としてのみ使う）
+ * 通常キャラは VRM → poster画像 → 簡易エラー表示。
+ * れなだけはPhotoreal Avatar PoCとしてTripoの通常GLBを直接表示し、
+ * 会話・音声・画面構成を変えずに実アプリ上の見た目と端末負荷を先に検証する。
  *
  * カメラは1本指ドラッグ=回り込み、2本指ピンチ=ズーム、2本指ドラッグ=位置ずらしで
  * 自由に動かせる（OrbitControls）。見失ったときのために右下に戻すボタンを出す
@@ -88,6 +92,9 @@ export function CharacterStage({
     (view: StageViewState) => stageViews.set(viewKey, view),
     [viewKey],
   );
+  const markReady = useCallback(() => setVrmStatus("ready"), []);
+  const markError = useCallback(() => setVrmStatus("error"), []);
+  const usePhotorealRena = personaId === "rena";
 
   // バリアントが変わったら読み込み状態をリセットする
   useEffect(() => {
@@ -102,8 +109,8 @@ export function CharacterStage({
     look.hair?.variantId,
   ]);
 
-  const showPoster = vrmStatus === "error" && !posterFailed;
-  const showErrorText = vrmStatus === "error" && posterFailed;
+  const showPoster = !usePhotorealRena && vrmStatus === "error" && !posterFailed;
+  const showErrorText = vrmStatus === "error" && (usePhotorealRena || posterFailed);
   // 借り物の服を着ても体は常に本人のものなので、肌の色は肌色ピッカーの指定だけで決まる。
   // 元の肌色から選んだ肌色へテクスチャを変換する（同じなら変換自体を行わない）。
   const ownSkinColor = BODY_SKIN_COLORS[personaId] ?? DEFAULT_SKIN_COLOR;
@@ -120,38 +127,49 @@ export function CharacterStage({
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/10 via-black/5 to-black/30"
       />
-      <VrmCanvas
-        url={vrmUrl(personaId, look.variantId)}
-        outfitUrl={
-          look.outfit ? vrmUrl(look.outfit.personaId, look.outfit.variantId) : null
-        }
-        hairUrl={look.hair ? vrmUrl(look.hair.personaId, look.hair.variantId) : null}
-        irisTextureUrl={look.iris ? `/face-parts/${look.iris.personaId}/iris.png` : null}
-        browsTextureUrl={
-          look.brows ? `/face-parts/${look.brows.personaId}/brows.png` : null
-        }
-        mouthTextureUrl={
-          look.mouth ? `/face-parts/${look.mouth.personaId}/mouth.png` : null
-        }
-        bodySkinColor={skinToneColor}
-        bodySkinSourceColor={skinToneColor ? ownSkinColor : null}
-        // 借り物の服は覆う範囲が本人の衣装と違うため、VRoidがアルファで消した
-        // 「服の下の体」がそのままだと穴として露出する。借りているあいだだけ
-        // 穴の無い体テクスチャ（scripts/build-complete-skins.py で生成）に差し替える
-        completeSkinUrl={look.outfit ? `/skin/${personaId}.webp` : null}
-        skinGlossLevel={look.skinGloss ?? null}
-        initialView={initialView}
-        onViewChange={rememberView}
-        motionUrl={vrmaUrl(look.motionId)}
-        expression={expression}
-        talking={talking}
-        lipSync={lipSync}
-        performance={performance}
-        reducedMotion={reducedMotion}
-        orbitControlsRef={orbitControlsRef}
-        onReady={() => setVrmStatus("ready")}
-        onError={() => setVrmStatus("error")}
-      />
+      {usePhotorealRena ? (
+        <GlbCanvas
+          url={RENA_GLB_URL}
+          initialView={initialView}
+          onViewChange={rememberView}
+          orbitControlsRef={orbitControlsRef}
+          onReady={markReady}
+          onError={markError}
+        />
+      ) : (
+        <VrmCanvas
+          url={vrmUrl(personaId, look.variantId)}
+          outfitUrl={
+            look.outfit ? vrmUrl(look.outfit.personaId, look.outfit.variantId) : null
+          }
+          hairUrl={look.hair ? vrmUrl(look.hair.personaId, look.hair.variantId) : null}
+          irisTextureUrl={look.iris ? `/face-parts/${look.iris.personaId}/iris.png` : null}
+          browsTextureUrl={
+            look.brows ? `/face-parts/${look.brows.personaId}/brows.png` : null
+          }
+          mouthTextureUrl={
+            look.mouth ? `/face-parts/${look.mouth.personaId}/mouth.png` : null
+          }
+          bodySkinColor={skinToneColor}
+          bodySkinSourceColor={skinToneColor ? ownSkinColor : null}
+          // 借り物の服は覆う範囲が本人の衣装と違うため、VRoidがアルファで消した
+          // 「服の下の体」がそのままだと穴として露出する。借りているあいだだけ
+          // 穴の無い体テクスチャ（scripts/build-complete-skins.py で生成）に差し替える
+          completeSkinUrl={look.outfit ? `/skin/${personaId}.webp` : null}
+          skinGlossLevel={look.skinGloss ?? null}
+          initialView={initialView}
+          onViewChange={rememberView}
+          motionUrl={vrmaUrl(look.motionId)}
+          expression={expression}
+          talking={talking}
+          lipSync={lipSync}
+          performance={performance}
+          reducedMotion={reducedMotion}
+          orbitControlsRef={orbitControlsRef}
+          onReady={markReady}
+          onError={markError}
+        />
+      )}
       {showPoster && (
         // eslint-disable-next-line @next/next/no-img-element -- publicの動的パスなのでnext/imageの最適化対象外
         <img
