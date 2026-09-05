@@ -1,4 +1,4 @@
-name: probe-firestorage-rena
+name: import-rena-glb-once
 
 on:
   push:
@@ -6,57 +6,95 @@ on:
       - "poc/rena-tripo-glb"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  probe:
+  import:
+    if: ${{ !contains(github.event.head_commit.message, '[rena-glb-import]') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Inspect all firestorage page chunks
+      - name: Download and commit rena GLB
         env:
-          SHARE_URL: https://firestorage.ai/ja/f/-x0xltPUWqHH
+          API_BASE: https://api.firestorage.ai/prod/file
+          SHARE_ID: -x0xltPUWqHH
+          EXPECTED_SIZE: "58711132"
+          EXPECTED_SHA256: affaafbd4c1026e69952f26cfc65676984151ce1ba922f1d28e5c01ff3705756
         run: |
           set -euo pipefail
-          curl -LfsS "$SHARE_URL" -o share.html
-          python - <<'PY'
-          import re, subprocess
-          from pathlib import Path
-          html = Path('share.html').read_text('utf-8', errors='ignore')
-          srcs = re.findall(r'<script[^>]+src="([^"]+)"', html)
-          print('scripts', len(srcs))
-          chunks = []
-          for i, src in enumerate(srcs):
-              if not src.startswith('http'):
-                  url = 'https://firestorage.ai' + src
-              else:
-                  url = src
-              out = Path(f'chunk-{i}.js')
-              subprocess.run(['curl','-LfsS',url,'-o',str(out)], check=True)
-              data = out.read_text('utf-8', errors='ignore')
-              chunks.append((url, data))
-              print(i, len(data), url)
-          needles = ['/api/', 'download', 'presign', 'signedurl', 'signed', 'shareid', 'share_id',
-                     'publicid', 'public_id', 'fetch(', 'filename', 'file_name', 'expires', 'token']
-          for url, text in chunks:
-              low = text.lower()
-              if not any(n in low for n in needles):
-                  continue
-              print('\n###', url)
-              for needle in needles:
-                  start = 0
-                  hits = 0
-                  while hits < 5:
-                      i = low.find(needle, start)
-                      if i < 0: break
-                      print(f'\n-- {needle} --')
-                      print(text[max(0,i-300):i+900])
-                      start = i + len(needle)
-                      hits += 1
-              paths = sorted(set(re.findall(r'[\"\'](\/[^\"\']{2,220})[\"\']', text)))
-              for p in paths:
-                  pl = p.lower()
-                  if any(k in pl for k in ['api','download','share','file']):
-                      print('PATH', p)
+          TARGET='public/models/rena/loose.glb'
+          if [ -f "$TARGET" ]; then
+            echo "rena GLB already exists; nothing to do"
+            exit 0
+          fi
+
+          curl -LfsS \
+            -H 'Origin: https://firestorage.ai' \
+            -H 'Referer: https://firestorage.ai/ja/f/-x0xltPUWqHH' \
+            "$API_BASE/shares/$SHARE_ID/files?maxResults=1000" \
+            -o files.json
+
+          FILE_ID=$(python - <<'PY'
+          import json
+          data = json.load(open('files.json', encoding='utf-8'))
+          files = data.get('files') or []
+          if not files:
+              raise SystemExit('No files returned by firestorage')
+          preferred = [f for f in files if (f.get('fileName') or f.get('name')) == 'ルーズ.glb']
+          item = (preferred or files)[0]
+          file_id = item.get('fileId') or item.get('id')
+          if not file_id:
+              raise SystemExit(f'No fileId in metadata keys: {sorted(item.keys())}')
+          print(file_id)
           PY
+          )
+          echo "Resolved firestorage file id: $FILE_ID"
+
+          curl -LfsS -X POST \
+            -H 'Origin: https://firestorage.ai' \
+            -H 'Referer: https://firestorage.ai/ja/f/-x0xltPUWqHH' \
+            "$API_BASE/shares/$SHARE_ID/files/$FILE_ID/download" \
+            -o download.json
+
+          DOWNLOAD_URL=$(python - <<'PY'
+          import json
+          data = json.load(open('download.json', encoding='utf-8'))
+          url = data.get('downloadUrl')
+          if not url:
+              raise SystemExit(f'No downloadUrl returned: {data}')
+          print(url)
+          PY
+          )
+
+          mkdir -p "$(dirname "$TARGET")"
+          curl -LfsS "$DOWNLOAD_URL" -o "$TARGET"
+
+          python - <<'PY'
+          import hashlib, os
+          path = 'public/models/rena/loose.glb'
+          expected_size = int(os.environ['EXPECTED_SIZE'])
+          expected_sha = os.environ['EXPECTED_SHA256']
+          size = os.path.getsize(path)
+          with open(path, 'rb') as f:
+              magic = f.read(4)
+          h = hashlib.sha256()
+          with open(path, 'rb') as f:
+              for chunk in iter(lambda: f.read(1024 * 1024), b''):
+                  h.update(chunk)
+          actual_sha = h.hexdigest()
+          print('GLB bytes:', size)
+          print('GLB sha256:', actual_sha)
+          if magic != b'glTF':
+              raise SystemExit(f'Invalid GLB magic: {magic!r}')
+          if size != expected_size:
+              raise SystemExit(f'Unexpected GLB size: {size} != {expected_size}')
+          if actual_sha != expected_sha:
+              raise SystemExit(f'Unexpected GLB sha256: {actual_sha} != {expected_sha}')
+          PY
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$TARGET"
+          git commit -m 'れなPhotoreal PoCのGLB本体を追加 [rena-glb-import]'
+          git push origin HEAD:poc/rena-tripo-glb
