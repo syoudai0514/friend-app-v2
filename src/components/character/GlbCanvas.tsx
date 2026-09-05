@@ -8,6 +8,12 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import type { StageViewState } from "./stage-view";
 
+interface LoadedModel {
+  scene: THREE.Group;
+  size: THREE.Vector3;
+  target: THREE.Vector3;
+}
+
 function disposeScene(scene: THREE.Object3D): void {
   scene.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return;
@@ -35,13 +41,15 @@ function GlbModel({
   onReady?: () => void;
   onError?: () => void;
 }) {
-  const { camera, size } = useThree();
-  const [scene, setScene] = useState<THREE.Group | null>(null);
+  const { camera, size: viewportSize } = useThree();
+  const [model, setModel] = useState<LoadedModel | null>(null);
 
+  // GLBの読み込みはURLが変わったときだけ行う。画面回転やReact再描画のたびに
+  // 56MB級モデルを読み直すとiPhoneで破綻するため、カメラ調整とは分離する。
   useEffect(() => {
     let cancelled = false;
     let loadedScene: THREE.Group | null = null;
-    setScene(null);
+    setModel(null);
 
     const loader = new GLTFLoader();
     loader.load(
@@ -67,34 +75,11 @@ function GlbModel({
         const bounds = new THREE.Box3().setFromObject(gltf.scene);
         const modelSize = bounds.getSize(new THREE.Vector3());
         const modelCenter = bounds.getCenter(new THREE.Vector3());
-        const target = new THREE.Vector3(0, modelCenter.y, 0);
-
-        const controls = orbitControlsRef.current;
-        const perspectiveCamera = camera as THREE.PerspectiveCamera;
-        if (initialView) {
-          camera.position.set(...initialView.cameraPosition);
-          if ("zoom" in camera) {
-            (camera as THREE.PerspectiveCamera).zoom = initialView.zoom;
-            (camera as THREE.PerspectiveCamera).updateProjectionMatrix();
-          }
-          controls?.target.set(...initialView.target);
-        } else if (perspectiveCamera.isPerspectiveCamera) {
-          // 縦長のiPhone画面でも頭から靴まで入る距離を、縦横両方のFOVから算出する。
-          const verticalFov = THREE.MathUtils.degToRad(perspectiveCamera.fov);
-          const aspect = Math.max(size.width / Math.max(size.height, 1), 0.01);
-          const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * aspect);
-          const distanceForHeight = (modelSize.y * 0.56) / Math.tan(verticalFov / 2);
-          const distanceForWidth = (modelSize.x * 0.56) / Math.tan(horizontalFov / 2);
-          const distance = Math.max(distanceForHeight, distanceForWidth, modelSize.z * 1.5, 0.5);
-
-          camera.position.set(0, target.y, distance);
-          controls?.target.copy(target);
-        }
-
-        camera.lookAt(controls?.target ?? target);
-        controls?.update();
-        controls?.saveState();
-        setScene(gltf.scene);
+        setModel({
+          scene: gltf.scene,
+          size: modelSize,
+          target: new THREE.Vector3(0, modelCenter.y, 0),
+        });
         onReady?.();
       },
       undefined,
@@ -107,9 +92,39 @@ function GlbModel({
       cancelled = true;
       if (loadedScene) disposeScene(loadedScene);
     };
-  }, [camera, initialView, onError, onReady, orbitControlsRef, size.height, size.width, url]);
+  }, [onError, onReady, url]);
 
-  return scene ? <primitive object={scene} /> : null;
+  // モデル自体は再読込せず、Canvasサイズが変わったときだけ全身が収まるよう再フィットする。
+  useEffect(() => {
+    if (!model) return;
+    const controls = orbitControlsRef.current;
+    const perspectiveCamera = camera as THREE.PerspectiveCamera;
+
+    if (initialView) {
+      camera.position.set(...initialView.cameraPosition);
+      if (perspectiveCamera.isPerspectiveCamera) {
+        perspectiveCamera.zoom = initialView.zoom;
+        perspectiveCamera.updateProjectionMatrix();
+      }
+      controls?.target.set(...initialView.target);
+    } else if (perspectiveCamera.isPerspectiveCamera) {
+      const verticalFov = THREE.MathUtils.degToRad(perspectiveCamera.fov);
+      const aspect = Math.max(viewportSize.width / Math.max(viewportSize.height, 1), 0.01);
+      const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * aspect);
+      const distanceForHeight = (model.size.y * 0.56) / Math.tan(verticalFov / 2);
+      const distanceForWidth = (model.size.x * 0.56) / Math.tan(horizontalFov / 2);
+      const distance = Math.max(distanceForHeight, distanceForWidth, model.size.z * 1.5, 0.5);
+
+      camera.position.set(0, model.target.y, distance);
+      controls?.target.copy(model.target);
+    }
+
+    camera.lookAt(controls?.target ?? model.target);
+    controls?.update();
+    controls?.saveState();
+  }, [camera, initialView, model, orbitControlsRef, viewportSize.height, viewportSize.width]);
+
+  return model ? <primitive object={model.scene} /> : null;
 }
 
 /**
