@@ -1,0 +1,61 @@
+name: probe-firestorage-rena
+
+on:
+  push:
+    branches:
+      - "poc/rena-tripo-glb"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch share page and inspect download candidates
+        env:
+          SHARE_URL: https://firestorage.ai/ja/f/-x0xltPUWqHH
+        run: |
+          set -euo pipefail
+          curl -LfsS -D headers.txt "$SHARE_URL" -o share.bin
+          echo '=== response headers ==='
+          sed -n '1,80p' headers.txt
+          echo '=== file info ==='
+          file share.bin
+          wc -c share.bin
+          echo '=== first bytes ==='
+          xxd -l 32 share.bin
+          echo '=== candidate links / endpoints ==='
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          p = Path('share.bin')
+          data = p.read_bytes()
+          try:
+              text = data.decode('utf-8', errors='ignore')
+          except Exception:
+              text = ''
+          patterns = [
+              r'https?://[^\s\"\'<>]+',
+              r'href=[\"\']([^\"\']+)[\"\']',
+              r'url[\"\']?\s*[:=]\s*[\"\']([^\"\']+)[\"\']',
+          ]
+          seen = set()
+          for pat in patterns:
+              for m in re.finditer(pat, text, re.I):
+                  u = m.group(1) if m.lastindex else m.group(0)
+                  if u in seen:
+                      continue
+                  seen.add(u)
+                  low = u.lower()
+                  if any(k in low for k in ['download', 'file', 'glb', 'x0xltpuwqhh', 'xyu4ixyewgu8gtsy']):
+                      print(u[:1000])
+          print('=== text around download ===')
+          for needle in ['download', 'ダウンロード', 'ルーズ.glb', 'XYU4iXyewGU8gTSY']:
+              i = text.lower().find(needle.lower())
+              if i >= 0:
+                  print('\n--', needle, '--')
+                  print(text[max(0, i-800):i+1800])
+          PY
