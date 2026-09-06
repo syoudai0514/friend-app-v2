@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "status": "current",
+  "updatedAt": "2026-09-07",
+  "asset": {
+    "path": "/models/rena/loose.glb",
+    "sha256": "31d5a06ef664d268c3e35235ea233350f1988e2e9a38c191eb27513f8149d93d",
+    "bytes": 102186072,
+    "format": "glTF-binary",
+    "rigged": false,
+    "morphTargetsRequired": false
+  },
+  "source": {
+    "previousSha256": "bfb42e47ce18f55678cc3a1c0de4a50257c634473a85c189fc8e5b212e52f925",
+    "bodyGeometry": "RenaBody",
+    "headGeometry": "RenaHead"
+  },
+  "geometry": {
+    "RenaBody": {
+      "vertices": 866285,
+      "faces": 1688006,
+      "maxY": 0.84869384765625
+    },
+    "RenaHead": {
+      "vertices": 634569,
+      "faces": 1199915,
+      "minY": 0.7858312726020813,
+      "maxY": 0.978179931640625
+    }
+  },
+  "visualContract": {
+    "preserveApprovedBodyStyle": true,
+    "preserveLongSlimLegs": true,
+    "preserveCurrentHipScale": true,
+    "schoolUniform": true,
+    "neckSeamMustNotBeVisible": true,
+    "headMustNotReadAsForwardOffset": true,
+    "chinMustNotReadAsProtruding": true,
+    "referenceHair": "bob with pink gradient ends",
+    "referenceEarrings": "pink flower earrings"
+  }
+}
