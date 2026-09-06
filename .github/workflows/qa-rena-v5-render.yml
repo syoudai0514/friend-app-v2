@@ -48,7 +48,7 @@ jobs:
                 '--ignore-gpu-blocklist',
                 '--use-angle=swiftshader',
                 '--disable-dev-shm-usage',
-                '--js-flags=--max-old-space-size=4096',
+                '--js-flags=--max-old-space-size=6144',
               ],
             });
             const context = await browser.newContext({
@@ -89,9 +89,27 @@ jobs:
 
             const response = await page.goto('http://127.0.0.1:3000/', { waitUntil: 'domcontentloaded', timeout: 60000 });
             if (!response || !response.ok()) throw new Error(`Home response not OK: ${response?.status()}`);
-            await page.getByRole('button', { name: '表示位置を戻す' }).waitFor({ state: 'visible', timeout: 120000 });
-            await page.waitForTimeout(4000);
-            if (await page.getByText('読み込めませんでした').count()) throw new Error('Rena model load fallback/error is visible');
+            await page.waitForTimeout(5000);
+            await page.screenshot({ path: 'rena-v5-app-qa/00-after-5s.png', fullPage: true });
+            fs.writeFileSync('rena-v5-app-qa/pre-ready.json', JSON.stringify({
+              stored: await page.evaluate(() => localStorage.getItem('friend-app:v2')),
+              bodyText: (await page.locator('body').innerText()).slice(0, 4000),
+              events,
+            }, null, 2));
+
+            await page.waitForFunction(() => {
+              const ready = document.querySelector('button[aria-label="表示位置を戻す"]');
+              const failed = document.body.innerText.includes('読み込めませんでした');
+              return Boolean(ready || failed);
+            }, undefined, { timeout: 600000, polling: 1000 });
+
+            if (await page.getByText('読み込めませんでした').count()) {
+              await page.screenshot({ path: 'rena-v5-app-qa/00-model-error.png', fullPage: true });
+              throw new Error('Rena model load fallback/error is visible');
+            }
+            const reset = page.getByRole('button', { name: '表示位置を戻す' });
+            await reset.waitFor({ state: 'visible', timeout: 10000 });
+            await page.waitForTimeout(3000);
 
             const canvas = page.locator('canvas').first();
             await canvas.waitFor({ state: 'visible' });
@@ -108,13 +126,13 @@ jobs:
               await page.mouse.down();
               await page.mouse.move(center.x + dx, center.y, { steps: 35 });
               await page.mouse.up();
-              await page.waitForTimeout(600);
+              await page.waitForTimeout(900);
             };
 
             await shot('01-front-full');
             await page.mouse.move(center.x, center.y);
             await page.mouse.wheel(0, -1500);
-            await page.waitForTimeout(1200);
+            await page.waitForTimeout(1500);
             await shot('02-front-close');
             await orbit(-205);
             await shot('03-yaw-90');
@@ -134,7 +152,7 @@ jobs:
               events,
             }, null, 2));
             await browser.close();
-          })().catch(err => {
+          })().catch(async err => {
             fs.writeFileSync('rena-v5-app-qa/failure.txt', String(err && (err.stack || err)));
             console.error(err);
             process.exit(1);
