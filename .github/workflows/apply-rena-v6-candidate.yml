@@ -1,0 +1,152 @@
+name: apply-rena-v6-candidate
+
+on:
+  push:
+    branches:
+      - "fix/rena-face-system-v5"
+    paths:
+      - ".github/workflows/apply-rena-v6-candidate.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Install mesh tools
+        run: pip install --quiet trimesh pillow numpy
+      - name: Rebuild asset and update canonical contract
+        run: |
+          git fetch --depth=1 origin main
+          git show FETCH_HEAD:public/models/rena/loose.glb > /tmp/rena-main.glb
+          python - <<'PY'
+          import os, json, hashlib, re
+          import numpy as np
+          import trimesh
+
+          MAIN='/tmp/rena-main.glb'
+          CURRENT='public/models/rena/loose.glb'
+          MAIN_SHA='bfb42e47ce18f55678cc3a1c0de4a50257c634473a85c189fc8e5b212e52f925'
+          V5_SHA='31d5a06ef664d268c3e35235ea233350f1988e2e9a38c191eb27513f8149d93d'
+          def sha(path): return hashlib.sha256(open(path,'rb').read()).hexdigest()
+          if sha(MAIN) != MAIN_SHA: raise SystemExit(f'main baseline moved: {sha(MAIN)}')
+          if sha(CURRENT) != V5_SHA: raise SystemExit(f'v5 source moved: {sha(CURRENT)}')
+
+          base=trimesh.load(MAIN, force='scene', process=False)
+          current=trimesh.load(CURRENT, force='scene', process=False)
+          body=base.geometry['RenaBody'].copy()
+          head=current.geometry['RenaHead'].copy()
+          if (len(body.vertices),len(body.faces)) != (867486,1690095): raise SystemExit('canonical body topology changed')
+          if (len(head.vertices),len(head.faces)) != (634569,1199915): raise SystemExit('v5 head topology changed')
+
+          def colors(mesh):
+            uv=mesh.visual.uv
+            tex=np.asarray(mesh.visual.material.baseColorTexture.convert('RGB'))
+            h,w=tex.shape[:2]
+            px=np.clip((uv[:,0]*(w-1)).astype(np.int32),0,w-1)
+            py=np.clip(((1-uv[:,1])*(h-1)).astype(np.int32),0,h-1)
+            return tex[py,px]
+          def skin_mask(c):
+            c=c.astype(np.int16)
+            return ((c[:,0]>155)&(c[:,1]>80)&(c[:,2]>70)&
+                    ((c[:,0]-c[:,1])>7)&((c[:,0]-c[:,2])>8)&
+                    ((c[:,0]-c[:,1])<105)&((c[:,0]-c[:,2])<125))
+
+          hc=colors(head); hs=skin_mask(hc)
+          f=head.faces; fc=head.vertices[f].mean(axis=1); fskin=(hs[f].sum(axis=1)>=2)
+          remove=(fskin & (np.abs(fc[:,0])<0.060) & (fc[:,1]<0.856) & (fc[:,2]>-0.047))
+          removed=int(remove.sum())
+          if removed != 162410: raise SystemExit(f'unexpected cleanup count: {removed}')
+          head.update_faces(~remove); head.remove_unreferenced_vertices()
+
+          out=trimesh.Scene()
+          out.add_geometry(body,geom_name='RenaBody',node_name='RenaBody')
+          out.add_geometry(head,geom_name='RenaHead',node_name='RenaHead')
+          out.export(CURRENT)
+          check=trimesh.load(CURRENT,force='scene',process=False)
+          cb=check.geometry['RenaBody']; ch=check.geometry['RenaHead']
+          if (len(cb.vertices),len(cb.faces)) != (867486,1690095): raise SystemExit('canonical body not preserved')
+          if not np.allclose(cb.bounds, body.bounds, atol=1e-7): raise SystemExit('canonical body bounds changed')
+          if (len(ch.vertices),len(ch.faces)) != (549599,1037505): raise SystemExit('unexpected cleaned head topology')
+
+          asset_sha=sha(CURRENT); asset_bytes=os.path.getsize(CURRENT)
+          if asset_sha != '31e0214990813b5faf410a909ae27efb3bbe528e0d44835a204c54ff73615fa8':
+            raise SystemExit(f'candidate is not reproducible: {asset_sha}')
+
+          manifest_path='public/models/rena/manifest.json'
+          manifest=json.load(open(manifest_path))
+          manifest['updatedAt']='2026-09-07'
+          manifest['asset']['sha256']=asset_sha
+          manifest['asset']['bytes']=asset_bytes
+          manifest['source']={
+            'previousSha256':V5_SHA,
+            'canonicalBodyAssetSha256':MAIN_SHA,
+            'bodyGeometry':'RenaBody',
+            'headGeometry':'RenaHead',
+            'strategy':'canonical-main-body + v5-head identity + lower replacement-skin neck cleanup'
+          }
+          manifest['geometry']={
+            'RenaBody':{'vertices':len(cb.vertices),'faces':len(cb.faces),'maxY':float(cb.bounds[1,1])},
+            'RenaHead':{'vertices':len(ch.vertices),'faces':len(ch.faces),'minY':float(ch.bounds[0,1]),'maxY':float(ch.bounds[1,1])}
+          }
+          manifest['integration']={
+            'headSkinFacesRemoved':removed,
+            'cleanupRule':{'absXMax':0.060,'maxYExclusive':0.856,'minZExclusive':-0.047},
+            'actualAppAcceptance':'pending'
+          }
+          open(manifest_path,'w').write(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
+
+          doc_path='docs/rena-photoreal-avatar-current.md'
+          doc=open(doc_path).read()
+          replacement='''## 3. v5 actual-app failure and confirmed root cause
+
+The v5 binary (`sha256 31d5a06e...`) passed the binary/unit/lint/build contract and loaded successfully through the actual app WebGL path, but that was **not** sufficient for visual acceptance. Actual app front/side/back QA exposed a pale lower-neck band and, in both profiles, a broad horizontal/sloped skin shelf protruding from the throat. That violated RENA-AVATAR-003, RENA-AVATAR-004, and RENA-AVATAR-006, so v5 must not be treated as an accepted visual result.
+
+Fresh geometry comparison against the canonical `main` baseline (`sha256 bfb42e47...`) showed why:
+
+- canonical `RenaBody`: 867,486 vertices / 1,690,095 faces, max Y `0.855865...`
+- v5 `RenaBody`: 866,285 vertices / 1,688,006 faces, max Y `0.848693...`
+- v5 had cropped part of the otherwise-approved natural body neck while retaining a large replacement-head skin surface through roughly Y `0.837`–`0.856`.
+- the remaining replacement-head lower skin sat substantially forward of the natural body neck in profile, which produced the shelf/spike visible in the actual app.
+
+The canonical-body comparison also confirmed that every retained v5 body vertex was a vertex from the canonical body; the failure was therefore an upper-neck integration error, not a reason to redesign the approved lower body.
+
+## 4. v6 integration strategy — CURRENT branch candidate
+
+The corrective strategy is still one final GLB with internal `RenaBody` and `RenaHead`, never runtime face/body layering.
+
+1. Restore `RenaBody` from the canonical `main` baseline exactly, including its natural neck. This makes RENA-AVATAR-001 an invariant rather than re-editing the approved body during each face iteration.
+2. Keep the v5 `RenaHead` as the face/hair/earring identity source so the accepted face direction is not redesigned.
+3. Remove only replacement-head **skin** faces in the lower throat/neck overlap region (`|x| < 0.060`, `y < 0.856`, `z > -0.047`). The forward jaw/chin is retained; non-skin faces are never selected, preserving hair ends and earrings.
+4. Do not recolor, reshape, crop, or regenerate the canonical body to hide the seam. The natural body neck supplies the visible neck surface after the redundant replacement-head shelf is removed.
+5. Lock the exact candidate binary and geometry in `public/models/rena/manifest.json`. Binary/unit/lint/build checks are necessary but the merge gate remains actual-app WebGL inspection from front, both sides, and back.
+
+CURRENT branch candidate identity:
+
+- SHA-256: `31e0214990813b5faf410a909ae27efb3bbe528e0d44835a204c54ff73615fa8`
+- Size: `98,586,840` bytes
+- `RenaBody`: 867,486 vertices / 1,690,095 faces (canonical baseline topology)
+- `RenaHead`: 549,599 vertices / 1,037,505 faces
+- replacement-head skin faces removed: 162,410
+
+**Acceptance status: pending actual-app visual QA.** This candidate must not be merged merely because automated checks are green.
+
+'''
+          doc2=re.sub(r'## 3\..*?(?=## 5\.)', replacement, doc, flags=re.S)
+          if doc2==doc: raise SystemExit('canonical doc section replacement failed')
+          open(doc_path,'w').write(doc2)
+
+          print(asset_sha,asset_bytes,removed,len(cb.vertices),len(cb.faces),len(ch.vertices),len(ch.faces))
+          PY
+      - name: Commit candidate asset and canonical metadata together
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/models/rena/loose.glb public/models/rena/manifest.json docs/rena-photoreal-avatar-current.md
+          git commit -m "fix: remove Rena replacement-neck shelf"
+          git push origin HEAD:fix/rena-face-system-v5
