@@ -1,0 +1,120 @@
+name: apply-rena-v6-candidate
+
+on:
+  push:
+    branches:
+      - "fix/rena-face-system-v5"
+    paths:
+      - ".github/workflows/apply-rena-v6-candidate.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Install mesh tools
+        run: pip install --quiet trimesh pillow numpy
+      - name: Rebuild asset and update canonical contract
+        env:
+          DOC_SECTION_B64: "IyMgMy4gdjUgYWN0dWFsLWFwcCBmYWlsdXJlIGFuZCBjb25maXJtZWQgcm9vdCBjYXVzZQoKVGhlIHY1IGJpbmFyeSAoYHNoYTI1NiAzMWQ1YTA2ZS4uLmApIHBhc3NlZCB0aGUgYmluYXJ5L3VuaXQvbGludC9idWlsZCBjb250cmFjdCBhbmQgbG9hZGVkIHN1Y2Nlc3NmdWxseSB0aHJvdWdoIHRoZSBhY3R1YWwgYXBwIFdlYkdMIHBhdGgsIGJ1dCB0aGF0IHdhcyAqKm5vdCoqIHN1ZmZpY2llbnQgZm9yIHZpc3VhbCBhY2NlcHRhbmNlLiBBY3R1YWwgYXBwIGZyb250L3NpZGUvYmFjayBRQSBleHBvc2VkIGEgcGFsZSBsb3dlci1uZWNrIGJhbmQgYW5kLCBpbiBib3RoIHByb2ZpbGVzLCBhIGJyb2FkIGhvcml6b250YWwvc2xvcGVkIHNraW4gc2hlbGYgcHJvdHJ1ZGluZyBmcm9tIHRoZSB0aHJvYXQuIFRoYXQgdmlvbGF0ZWQgUkVOQS1BVkFUQVItMDAzLCBSRU5BLUFWQVRBUi0wMDQsIGFuZCBSRU5BLUFWQVRBUi0wMDYsIHNvIHY1IG11c3Qgbm90IGJlIHRyZWF0ZWQgYXMgYW4gYWNjZXB0ZWQgdmlzdWFsIHJlc3VsdC4KCkZyZXNoIGdlb21ldHJ5IGNvbXBhcmlzb24gYWdhaW5zdCB0aGUgY2Fub25pY2FsIGBtYWluYCBiYXNlbGluZSAoYHNoYTI1NiBiZmI0MmU0Ny4uLmApIHNob3dlZCB3aHk6CgotIGNhbm9uaWNhbCBgUmVuYUJvZHlgOiA4NjcsNDg2IHZlcnRpY2VzIC8gMSw2OTAsMDk1IGZhY2VzLCBtYXggWSBgMC44NTU4NjUuLi5gCi0gdjUgYFJlbmFCb2R5YDogODY2LDI4NSB2ZXJ0aWNlcyAvIDEsNjg4LDAwNiBmYWNlcywgbWF4IFkgYDAuODQ4NjkzLi4uYAotIHY1IGhhZCBjcm9wcGVkIHBhcnQgb2YgdGhlIG90aGVyd2lzZS1hcHByb3ZlZCBuYXR1cmFsIGJvZHkgbmVjayB3aGlsZSByZXRhaW5pbmcgYSBsYXJnZSByZXBsYWNlbWVudC1oZWFkIHNraW4gc3VyZmFjZSB0aHJvdWdoIHJvdWdobHkgWSBgMC44Mzdg4oCTYDAuODU2YC4KLSB0aGUgcmVtYWluaW5nIHJlcGxhY2VtZW50LWhlYWQgbG93ZXIgc2tpbiBzYXQgc3Vic3RhbnRpYWxseSBmb3J3YXJkIG9mIHRoZSBuYXR1cmFsIGJvZHkgbmVjayBpbiBwcm9maWxlLCB3aGljaCBwcm9kdWNlZCB0aGUgc2hlbGYvc3Bpa2UgdmlzaWJsZSBpbiB0aGUgYWN0dWFsIGFwcC4KClRoZSBjYW5vbmljYWwtYm9keSBjb21wYXJpc29uIGFsc28gY29uZmlybWVkIHRoYXQgZXZlcnkgcmV0YWluZWQgdjUgYm9keSB2ZXJ0ZXggd2FzIGEgdmVydGV4IGZyb20gdGhlIGNhbm9uaWNhbCBib2R5OyB0aGUgZmFpbHVyZSB3YXMgdGhlcmVmb3JlIGFuIHVwcGVyLW5lY2sgaW50ZWdyYXRpb24gZXJyb3IsIG5vdCBhIHJlYXNvbiB0byByZWRlc2lnbiB0aGUgYXBwcm92ZWQgbG93ZXIgYm9keS4KCiMjIDQuIHY2IGludGVncmF0aW9uIHN0cmF0ZWd5IOKAlCBDVVJSRU5UIGJyYW5jaCBjYW5kaWRhdGUKClRoZSBjb3JyZWN0aXZlIHN0cmF0ZWd5IGlzIHN0aWxsIG9uZSBmaW5hbCBHTEIgd2l0aCBpbnRlcm5hbCBgUmVuYUJvZHlgIGFuZCBgUmVuYUhlYWRgLCBuZXZlciBydW50aW1lIGZhY2UvYm9keSBsYXllcmluZy4KCjEuIFJlc3RvcmUgYFJlbmFCb2R5YCBmcm9tIHRoZSBjYW5vbmljYWwgYG1haW5gIGJhc2VsaW5lIGV4YWN0bHksIGluY2x1ZGluZyBpdHMgbmF0dXJhbCBuZWNrLiBUaGlzIG1ha2VzIFJFTkEtQVZBVEFSLTAwMSBhbiBpbnZhcmlhbnQgcmF0aGVyIHRoYW4gcmUtZWRpdGluZyB0aGUgYXBwcm92ZWQgYm9keSBkdXJpbmcgZWFjaCBmYWNlIGl0ZXJhdGlvbi4KMi4gS2VlcCB0aGUgdjUgYFJlbmFIZWFkYCBhcyB0aGUgZmFjZS9oYWlyL2VhcnJpbmcgaWRlbnRpdHkgc291cmNlIHNvIHRoZSBhY2NlcHRlZCBmYWNlIGRpcmVjdGlvbiBpcyBub3QgcmVkZXNpZ25lZC4KMy4gUmVtb3ZlIG9ubHkgcmVwbGFjZW1lbnQtaGVhZCAqKnNraW4qKiBmYWNlcyBpbiB0aGUgbG93ZXIgdGhyb2F0L25lY2sgb3ZlcmxhcCByZWdpb24gKGB8eHwgPCAwLjA2MGAsIGB5IDwgMC44NTZgLCBgeiA+IC0wLjA0N2ApLiBUaGUgZm9yd2FyZCBqYXcvY2hpbiBpcyByZXRhaW5lZDsgbm9uLXNraW4gZmFjZXMgYXJlIG5ldmVyIHNlbGVjdGVkLCBwcmVzZXJ2aW5nIGhhaXIgZW5kcyBhbmQgZWFycmluZ3MuCjQuIERvIG5vdCByZWNvbG9yLCByZXNoYXBlLCBjcm9wLCBvciByZWdlbmVyYXRlIHRoZSBjYW5vbmljYWwgYm9keSB0byBoaWRlIHRoZSBzZWFtLiBUaGUgbmF0dXJhbCBib2R5IG5lY2sgc3VwcGxpZXMgdGhlIHZpc2libGUgbmVjayBzdXJmYWNlIGFmdGVyIHRoZSByZWR1bmRhbnQgcmVwbGFjZW1lbnQtaGVhZCBzaGVsZiBpcyByZW1vdmVkLgo1LiBMb2NrIHRoZSBleGFjdCBjYW5kaWRhdGUgYmluYXJ5IGFuZCBnZW9tZXRyeSBpbiBgcHVibGljL21vZGVscy9yZW5hL21hbmlmZXN0Lmpzb25gLiBCaW5hcnkvdW5pdC9saW50L2J1aWxkIGNoZWNrcyBhcmUgbmVjZXNzYXJ5IGJ1dCB0aGUgbWVyZ2UgZ2F0ZSByZW1haW5zIGFjdHVhbC1hcHAgV2ViR0wgaW5zcGVjdGlvbiBmcm9tIGZyb250LCBib3RoIHNpZGVzLCBhbmQgYmFjay4KCkNVUlJFTlQgYnJhbmNoIGNhbmRpZGF0ZSBpZGVudGl0eToKCi0gU0hBLTI1NjogYDMxZTAyMTQ5OTA4MTNiNWZhZjQxMGE5MDlhZTI3ZWZiM2JiZTUyOGUwZDQ0ODM1YTIwNGM1NGZmNzM2MTVmYThgCi0gU2l6ZTogYDk4LDU4Niw4NDBgIGJ5dGVzCi0gYFJlbmFCb2R5YDogODY3LDQ4NiB2ZXJ0aWNlcyAvIDEsNjkwLDA5NSBmYWNlcyAoY2Fub25pY2FsIGJhc2VsaW5lIHRvcG9sb2d5KQotIGBSZW5hSGVhZGA6IDU0OSw1OTkgdmVydGljZXMgLyAxLDAzNyw1MDUgZmFjZXMKLSByZXBsYWNlbWVudC1oZWFkIHNraW4gZmFjZXMgcmVtb3ZlZDogMTYyLDQxMAoKKipBY2NlcHRhbmNlIHN0YXR1czogcGVuZGluZyBhY3R1YWwtYXBwIHZpc3VhbCBRQS4qKiBUaGlzIGNhbmRpZGF0ZSBtdXN0IG5vdCBiZSBtZXJnZWQgbWVyZWx5IGJlY2F1c2UgYXV0b21hdGVkIGNoZWNrcyBhcmUgZ3JlZW4uCgo="
+        run: |
+          git fetch --depth=1 origin main
+          git show FETCH_HEAD:public/models/rena/loose.glb > /tmp/rena-main.glb
+          python - <<'PY'
+          import os, json, hashlib, re, base64
+          import numpy as np
+          import trimesh
+
+          MAIN='/tmp/rena-main.glb'
+          CURRENT='public/models/rena/loose.glb'
+          MAIN_SHA='bfb42e47ce18f55678cc3a1c0de4a50257c634473a85c189fc8e5b212e52f925'
+          V5_SHA='31d5a06ef664d268c3e35235ea233350f1988e2e9a38c191eb27513f8149d93d'
+          def sha(path): return hashlib.sha256(open(path,'rb').read()).hexdigest()
+          if sha(MAIN) != MAIN_SHA: raise SystemExit(f'main baseline moved: {sha(MAIN)}')
+          if sha(CURRENT) != V5_SHA: raise SystemExit(f'v5 source moved: {sha(CURRENT)}')
+
+          base=trimesh.load(MAIN, force='scene', process=False)
+          current=trimesh.load(CURRENT, force='scene', process=False)
+          body=base.geometry['RenaBody'].copy()
+          head=current.geometry['RenaHead'].copy()
+          if (len(body.vertices),len(body.faces)) != (867486,1690095): raise SystemExit('canonical body topology changed')
+          if (len(head.vertices),len(head.faces)) != (634569,1199915): raise SystemExit('v5 head topology changed')
+
+          def colors(mesh):
+            uv=mesh.visual.uv
+            tex=np.asarray(mesh.visual.material.baseColorTexture.convert('RGB'))
+            h,w=tex.shape[:2]
+            px=np.clip((uv[:,0]*(w-1)).astype(np.int32),0,w-1)
+            py=np.clip(((1-uv[:,1])*(h-1)).astype(np.int32),0,h-1)
+            return tex[py,px]
+          def skin_mask(c):
+            c=c.astype(np.int16)
+            return ((c[:,0]>155)&(c[:,1]>80)&(c[:,2]>70)&
+                    ((c[:,0]-c[:,1])>7)&((c[:,0]-c[:,2])>8)&
+                    ((c[:,0]-c[:,1])<105)&((c[:,0]-c[:,2])<125))
+
+          hc=colors(head); hs=skin_mask(hc)
+          f=head.faces; fc=head.vertices[f].mean(axis=1); fskin=(hs[f].sum(axis=1)>=2)
+          remove=(fskin & (np.abs(fc[:,0])<0.060) & (fc[:,1]<0.856) & (fc[:,2]>-0.047))
+          removed=int(remove.sum())
+          if removed != 162410: raise SystemExit(f'unexpected cleanup count: {removed}')
+          head.update_faces(~remove); head.remove_unreferenced_vertices()
+
+          out=trimesh.Scene()
+          out.add_geometry(body,geom_name='RenaBody',node_name='RenaBody')
+          out.add_geometry(head,geom_name='RenaHead',node_name='RenaHead')
+          out.export(CURRENT)
+          check=trimesh.load(CURRENT,force='scene',process=False)
+          cb=check.geometry['RenaBody']; ch=check.geometry['RenaHead']
+          if (len(cb.vertices),len(cb.faces)) != (867486,1690095): raise SystemExit('canonical body not preserved')
+          if not np.allclose(cb.bounds, body.bounds, atol=1e-7): raise SystemExit('canonical body bounds changed')
+          if (len(ch.vertices),len(ch.faces)) != (549599,1037505): raise SystemExit('unexpected cleaned head topology')
+
+          asset_sha=sha(CURRENT); asset_bytes=os.path.getsize(CURRENT)
+          if asset_sha != '31e0214990813b5faf410a909ae27efb3bbe528e0d44835a204c54ff73615fa8':
+            raise SystemExit(f'candidate is not reproducible: {asset_sha}')
+
+          manifest_path='public/models/rena/manifest.json'
+          manifest=json.load(open(manifest_path))
+          manifest['updatedAt']='2026-09-07'
+          manifest['asset']['sha256']=asset_sha
+          manifest['asset']['bytes']=asset_bytes
+          manifest['source']={
+            'previousSha256':V5_SHA,
+            'canonicalBodyAssetSha256':MAIN_SHA,
+            'bodyGeometry':'RenaBody',
+            'headGeometry':'RenaHead',
+            'strategy':'canonical-main-body + v5-head identity + lower replacement-skin neck cleanup'
+          }
+          manifest['geometry']={
+            'RenaBody':{'vertices':len(cb.vertices),'faces':len(cb.faces),'maxY':float(cb.bounds[1,1])},
+            'RenaHead':{'vertices':len(ch.vertices),'faces':len(ch.faces),'minY':float(ch.bounds[0,1]),'maxY':float(ch.bounds[1,1])}
+          }
+          manifest['integration']={
+            'headSkinFacesRemoved':removed,
+            'cleanupRule':{'absXMax':0.060,'maxYExclusive':0.856,'minZExclusive':-0.047},
+            'actualAppAcceptance':'pending'
+          }
+          open(manifest_path,'w').write(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
+
+          doc_path='docs/rena-photoreal-avatar-current.md'
+          doc=open(doc_path).read()
+          replacement=base64.b64decode(os.environ['DOC_SECTION_B64']).decode('utf-8')
+          doc2=re.sub(r'## 3\..*?(?=## 5\.)', replacement, doc, flags=re.S)
+          if doc2==doc: raise SystemExit('canonical doc section replacement failed')
+          open(doc_path,'w').write(doc2)
+          print(asset_sha,asset_bytes,removed,len(cb.vertices),len(cb.faces),len(ch.vertices),len(ch.faces))
+          PY
+      - name: Commit candidate asset and canonical metadata together
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/models/rena/loose.glb public/models/rena/manifest.json docs/rena-photoreal-avatar-current.md
+          git commit -m "fix: remove Rena replacement-neck shelf"
+          git push origin HEAD:fix/rena-face-system-v5

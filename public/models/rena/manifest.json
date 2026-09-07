@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "status": "current",
+  "updatedAt": "2026-09-07",
+  "asset": {
+    "path": "/models/rena/loose.glb",
+    "sha256": "31e0214990813b5faf410a909ae27efb3bbe528e0d44835a204c54ff73615fa8",
+    "bytes": 98586840,
+    "format": "glTF-binary",
+    "rigged": false,
+    "morphTargetsRequired": false
+  },
+  "source": {
+    "previousSha256": "31d5a06ef664d268c3e35235ea233350f1988e2e9a38c191eb27513f8149d93d",
+    "canonicalBodyAssetSha256": "bfb42e47ce18f55678cc3a1c0de4a50257c634473a85c189fc8e5b212e52f925",
+    "bodyGeometry": "RenaBody",
+    "headGeometry": "RenaHead",
+    "strategy": "canonical-main-body + v5-head identity + lower replacement-skin neck cleanup"
+  },
+  "geometry": {
+    "RenaBody": {
+      "vertices": 867486,
+      "faces": 1690095,
+      "maxY": 0.855865478515625
+    },
+    "RenaHead": {
+      "vertices": 549599,
+      "faces": 1037505,
+      "minY": 0.7858312726020813,
+      "maxY": 0.978179931640625
+    }
+  },
+  "visualContract": {
+    "preserveApprovedBodyStyle": true,
+    "preserveLongSlimLegs": true,
+    "preserveCurrentHipScale": true,
+    "schoolUniform": true,
+    "neckSeamMustNotBeVisible": true,
+    "headMustNotReadAsForwardOffset": true,
+    "chinMustNotReadAsProtruding": true,
+    "referenceHair": "bob with pink gradient ends",
+    "referenceEarrings": "pink flower earrings"
+  },
+  "integration": {
+    "headSkinFacesRemoved": 162410,
+    "cleanupRule": {
+      "absXMax": 0.06,
+      "maxYExclusive": 0.856,
+      "minZExclusive": -0.047
+    },
+    "actualAppAcceptance": "pending"
+  }
+}

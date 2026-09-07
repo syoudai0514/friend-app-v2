@@ -1,0 +1,38 @@
+name: export-rena-v5-asset
+
+on:
+  push:
+    branches:
+      - "fix/rena-face-system-v5"
+    paths:
+      - ".github/workflows/export-rena-v5-asset.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Export CURRENT and canonical main assets
+        run: |
+          mkdir -p rena-export/current rena-export/main
+          cp public/models/rena/loose.glb rena-export/current/loose.glb
+          git fetch --depth=1 origin main
+          git show FETCH_HEAD:public/models/rena/loose.glb > rena-export/main/loose.glb
+          echo CURRENT
+          sha256sum rena-export/current/loose.glb
+          stat -c '%s bytes' rena-export/current/loose.glb
+          echo MAIN
+          sha256sum rena-export/main/loose.glb
+          stat -c '%s bytes' rena-export/main/loose.glb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rena-current-and-main-glb
+          path: rena-export/
+          compression-level: 0
+          retention-days: 1
