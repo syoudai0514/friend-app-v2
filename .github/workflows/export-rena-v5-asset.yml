@@ -1,0 +1,28 @@
+name: export-rena-v5-asset
+
+on:
+  push:
+    branches:
+      - "fix/rena-face-system-v5"
+    paths:
+      - ".github/workflows/export-rena-v5-asset.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify CURRENT asset
+        run: |
+          sha256sum public/models/rena/loose.glb
+          stat -c '%s bytes' public/models/rena/loose.glb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rena-v5-current-glb
+          path: public/models/rena/loose.glb
+          compression-level: 0
+          retention-days: 1
