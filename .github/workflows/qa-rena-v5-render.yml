@@ -6,6 +6,9 @@ on:
       - "fix/rena-face-system-v5"
     paths:
       - ".github/workflows/qa-rena-v5-render.yml"
+      - "public/models/rena/loose.glb"
+      - "public/models/rena/manifest.json"
+      - "docs/rena-photoreal-avatar-current.md"
 
 permissions:
   contents: read
