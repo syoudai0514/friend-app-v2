@@ -28,7 +28,7 @@ jobs:
           npm run dev > /tmp/rena-v5-dev.log 2>&1 &
           echo $! > /tmp/rena-v5-dev.pid
           for i in $(seq 1 90); do
-            if curl -fsS http://127.0.0.1:3000/ >/dev/null; then exit 0; fi
+            if curl -fsS http://localhost:3000/ >/dev/null; then exit 0; fi
             sleep 1
           done
           cat /tmp/rena-v5-dev.log
@@ -87,7 +87,7 @@ jobs:
             page.on('pageerror', e => events.push(`pageerror: ${e.stack || e.message}`));
             page.on('requestfailed', r => events.push(`requestfailed: ${r.url()} :: ${r.failure()?.errorText}`));
 
-            const response = await page.goto('http://127.0.0.1:3000/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+            const response = await page.goto('http://localhost:3000/', { waitUntil: 'domcontentloaded', timeout: 60000 });
             if (!response || !response.ok()) throw new Error(`Home response not OK: ${response?.status()}`);
             await page.waitForTimeout(5000);
             await page.screenshot({ path: 'rena-v5-app-qa/00-after-5s.png', fullPage: true });
@@ -97,6 +97,10 @@ jobs:
               events,
             }, null, 2));
 
+            await page.waitForFunction(() => document.body.innerText.includes('クローゼット'), undefined, {
+              timeout: 120000,
+              polling: 500,
+            });
             await page.waitForFunction(() => {
               const ready = document.querySelector('button[aria-label="表示位置を戻す"]');
               const failed = document.body.innerText.includes('読み込めませんでした');
