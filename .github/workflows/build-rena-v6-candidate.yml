@@ -1,0 +1,138 @@
+name: build-rena-v6-candidate
+
+on:
+  push:
+    branches:
+      - "fix/rena-face-system-v5"
+    paths:
+      - ".github/workflows/build-rena-v6-candidate.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Install mesh tools
+        run: pip install --quiet trimesh pillow numpy matplotlib
+      - name: Build candidate from canonical main body and CURRENT v5 head
+        run: |
+          git fetch --depth=1 origin main
+          git show FETCH_HEAD:public/models/rena/loose.glb > /tmp/rena-main.glb
+          python - <<'PY'
+          import os, json, hashlib
+          import numpy as np
+          import trimesh
+          import matplotlib.pyplot as plt
+
+          MAIN='/tmp/rena-main.glb'
+          CURRENT='public/models/rena/loose.glb'
+          OUT='rena-v6-candidate.glb'
+          QA='rena-v6-candidate-qa'
+          os.makedirs(QA, exist_ok=True)
+
+          MAIN_SHA='bfb42e47ce18f55678cc3a1c0de4a50257c634473a85c189fc8e5b212e52f925'
+          CURRENT_SHA='31d5a06ef664d268c3e35235ea233350f1988e2e9a38c191eb27513f8149d93d'
+          def sha(path): return hashlib.sha256(open(path,'rb').read()).hexdigest()
+          if sha(MAIN) != MAIN_SHA: raise SystemExit(f'main baseline moved: {sha(MAIN)}')
+          if sha(CURRENT) != CURRENT_SHA: raise SystemExit(f'current v5 moved: {sha(CURRENT)}')
+
+          base=trimesh.load(MAIN, force='scene', process=False)
+          current=trimesh.load(CURRENT, force='scene', process=False)
+          body=base.geometry['RenaBody'].copy()
+          head=current.geometry['RenaHead'].copy()
+
+          if (len(body.vertices),len(body.faces)) != (867486,1690095):
+            raise SystemExit('canonical body topology changed')
+          if (len(head.vertices),len(head.faces)) != (634569,1199915):
+            raise SystemExit('current head topology changed')
+
+          def colors(mesh):
+            uv=mesh.visual.uv
+            tex=np.asarray(mesh.visual.material.baseColorTexture.convert('RGB'))
+            h,w=tex.shape[:2]
+            px=np.clip((uv[:,0]*(w-1)).astype(np.int32),0,w-1)
+            py=np.clip(((1-uv[:,1])*(h-1)).astype(np.int32),0,h-1)
+            return tex[py,px]
+          def skin_mask(c):
+            c=c.astype(np.int16)
+            return ((c[:,0]>155)&(c[:,1]>80)&(c[:,2]>70)&
+                    ((c[:,0]-c[:,1])>7)&((c[:,0]-c[:,2])>8)&
+                    ((c[:,0]-c[:,1])<105)&((c[:,0]-c[:,2])<125))
+
+          # Preserve the canonical main body exactly. The v5 failure came from
+          # replacing the natural neck with a broad replacement-head skin shelf.
+          # Remove only replacement-head SKIN in the lower neck/throat region;
+          # preserve the forward jaw/chin and every non-skin face (hair/earrings).
+          hc=colors(head); hs=skin_mask(hc)
+          f=head.faces
+          fc=head.vertices[f].mean(axis=1)
+          fskin=(hs[f].sum(axis=1)>=2)
+          central=np.abs(fc[:,0]) < 0.060
+          lower=fc[:,1] < 0.856
+          posterior_to_jaw=fc[:,2] > -0.047
+          remove=fskin & central & lower & posterior_to_jaw
+          if int(remove.sum()) < 120000:
+            raise SystemExit(f'neck cleanup unexpectedly small: {int(remove.sum())}')
+          if np.any(remove & ~fskin): raise SystemExit('non-skin face removal attempted')
+          head.update_faces(~remove)
+          head.remove_unreferenced_vertices()
+
+          out=trimesh.Scene()
+          out.add_geometry(body, geom_name='RenaBody', node_name='RenaBody')
+          out.add_geometry(head, geom_name='RenaHead', node_name='RenaHead')
+          out.export(OUT)
+          check=trimesh.load(OUT, force='scene', process=False)
+          if set(check.geometry.keys()) != {'RenaBody','RenaHead'}:
+            raise SystemExit(f'unexpected geometry names: {list(check.geometry)}')
+          cb=check.geometry['RenaBody']; ch=check.geometry['RenaHead']
+          if (len(cb.vertices),len(cb.faces)) != (867486,1690095):
+            raise SystemExit('canonical body was not preserved')
+          if not np.allclose(cb.bounds, body.bounds, atol=1e-7):
+            raise SystemExit('canonical body bounds changed')
+
+          report={
+            'main_source_sha256':sha(MAIN),
+            'current_v5_sha256':sha(CURRENT),
+            'candidate_sha256':sha(OUT),
+            'candidate_bytes':os.path.getsize(OUT),
+            'head_skin_faces_removed':int(remove.sum()),
+            'body':{'verts':len(cb.vertices),'faces':len(cb.faces),'bounds':cb.bounds.tolist()},
+            'head':{'verts':len(ch.vertices),'faces':len(ch.faces),'bounds':ch.bounds.tolist()},
+            'cleanup_rule':{'max_y_exclusive':0.856,'min_z_exclusive':-0.047,'abs_x_max':0.060},
+          }
+          with open(f'{QA}/report.json','w') as fp: json.dump(report,fp,indent=2)
+
+          # Dense vertex previews are diagnostic only; actual app/WebGL QA remains the gate.
+          rng=np.random.default_rng(20260907)
+          P=[]; C=[]
+          for n,g in check.geometry.items():
+            k=min(len(g.vertices),300000); ids=rng.choice(len(g.vertices),k,replace=False)
+            p=g.vertices[ids]
+            try:
+              uv=g.visual.uv[ids]; t=np.asarray(g.visual.material.baseColorTexture.convert('RGB')); hh,ww=t.shape[:2]
+              xx=np.clip((uv[:,0]*(ww-1)).astype(np.int32),0,ww-1); yy=np.clip(((1-uv[:,1])*(hh-1)).astype(np.int32),0,hh-1)
+              c=t[yy,xx]/255.0
+            except Exception: c=np.full((k,3),0.6)
+            P.append(p); C.append(c)
+          p=np.concatenate(P); c=np.concatenate(C); keep=p[:,1]>.735; p=p[keep]; c=c[keep]
+          for label,horiz,depth in [('front',p[:,0],p[:,2]),('back',-p[:,0],-p[:,2]),('left',p[:,2],-p[:,0]),('right',-p[:,2],p[:,0])]:
+            order=np.argsort(depth)
+            plt.figure(figsize=(8,8)); plt.scatter(horiz[order],p[:,1][order],s=.22,c=c[order],marker='.',linewidths=0)
+            plt.xlim(-.18,.18); plt.ylim(.735,1.005); plt.axis('off'); plt.tight_layout(pad=0)
+            plt.savefig(f'{QA}/{label}.png',dpi=180,facecolor='white'); plt.close()
+          print(json.dumps(report, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rena-v6-candidate
+          path: |
+            rena-v6-candidate.glb
+            rena-v6-candidate-qa/
+          compression-level: 0
+          retention-days: 2
