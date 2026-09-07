@@ -25,42 +25,38 @@ The current Rena GLB is **not rigged** and is intentionally treated as static ge
 
 The exact approved-current binary identity is recorded in `public/models/rena/manifest.json` and is enforced by automated tests.
 
-## 3. Root cause found in the pre-v5 asset
+## 3. v5 actual-app failure and confirmed root cause
 
-Fresh inspection of the prior current binary (`sha256 bfb42e47...`) found two geometries:
+The v5 binary (`sha256 31d5a06e...`) passed the binary/unit/lint/build contract and loaded successfully through the actual app WebGL path, but that was **not** sufficient for visual acceptance. Actual app front/side/back QA exposed a pale lower-neck band and, in both profiles, a broad horizontal/sloped skin shelf protruding from the throat. That violated RENA-AVATAR-003, RENA-AVATAR-004, and RENA-AVATAR-006, so v5 must not be treated as an accepted visual result.
 
-- `RenaBody`: up to Y `0.855865...`
-- `RenaHead`: down to Y `0.785501...`
+Fresh geometry comparison against the canonical `main` baseline (`sha256 bfb42e47...`) showed why:
 
-That meant the replacement head/neck and body overlapped across roughly 7 cm of model-space height. The replacement head included lower-neck/chest skin over geometry that was still present in the body. In the app this read as the rectangular/patch-like neck splice rather than a single neck.
+- canonical `RenaBody`: 867,486 vertices / 1,690,095 faces, max Y `0.855865...`
+- v5 `RenaBody`: 866,285 vertices / 1,688,006 faces, max Y `0.848693...`
+- v5 had cropped part of the otherwise-approved natural body neck while retaining a large replacement-head skin surface through roughly Y `0.837`–`0.856`.
+- the remaining replacement-head lower skin sat substantially forward of the natural body neck in profile, which produced the shelf/spike visible in the actual app.
 
-The lower replacement-neck texture also differed strongly from the approved body-neck skin sample. Before correction, representative median RGB values were approximately:
+The canonical-body comparison also confirmed that every retained v5 body vertex was a vertex from the canonical body; the failure was therefore an upper-neck integration error, not a reason to redesign the approved lower body.
 
-- approved body neck: `[239, 198, 183]`
-- replacement head neck: `[208, 134, 133]`
+## 4. v6 integration strategy — CURRENT branch candidate
 
-The profile also still read slightly forward, while the v4 lower-face correction had not fully removed the pointed/protruding chin impression.
+The corrective strategy is still one final GLB with internal `RenaBody` and `RenaHead`, never runtime face/body layering.
 
-## 4. v5 integration strategy
+1. Restore `RenaBody` from the canonical `main` baseline exactly, including its natural neck. This makes RENA-AVATAR-001 an invariant rather than re-editing the approved body during each face iteration.
+2. Keep the v5 `RenaHead` as the face/hair/earring identity source so the accepted face direction is not redesigned.
+3. Remove only replacement-head **skin** faces in the lower throat/neck overlap region (`|x| < 0.060`, `y < 0.856`, `z > -0.047`). The forward jaw/chin is retained; non-skin faces are never selected, preserving hair ends and earrings.
+4. Do not recolor, reshape, crop, or regenerate the canonical body to hide the seam. The natural body neck supplies the visible neck surface after the redundant replacement-head shelf is removed.
+5. Lock the exact candidate binary and geometry in `public/models/rena/manifest.json`. Binary/unit/lint/build checks are necessary but the merge gate remains actual-app WebGL inspection from front, both sides, and back.
 
-The chosen strategy is a single final GLB with two internal geometry groups, not runtime face/body layering.
+CURRENT branch candidate identity:
 
-The approved body is the invariant base. The repair changes only the upper skin transition and replacement head geometry required to make that transition continuous.
+- SHA-256: `31e0214990813b5faf410a909ae27efb3bbe528e0d44835a204c54ff73615fa8`
+- Size: `98,586,840` bytes
+- `RenaBody`: 867,486 vertices / 1,690,095 faces (canonical baseline topology)
+- `RenaHead`: 549,599 vertices / 1,037,505 faces
+- replacement-head skin faces removed: 162,410
 
-Applied v5 corrections:
-
-1. Move the replacement head about 3 mm posterior, then blend the lower neck back onto the measured current body neck axis so the offset correction does not create a new seam.
-2. Apply a conservative additional lower-face refinement: up to about 3 mm posterior and 0.8 mm upward only in the central lower-face skin region, plus a small lower-jaw width taper. Eyes, nose bridge, hair and earrings are excluded by the spatial/texture mask.
-3. Remove the old overlapping skin surfaces while preserving clothing and non-skin detail. The validated candidate removed 2,089 body skin faces above the collar transition and 71,365 replacement-head skin faces below the transition.
-4. Fit the replacement lower-neck cross-section toward the body neck center/width over a short vertical blend region rather than relying on a butt joint.
-5. Match lower-neck PBR response to the body material and correct only the replacement neck texture region multiplicatively toward the approved body-neck skin sample. Baked texture detail is retained instead of painting the neck a flat color.
-6. Keep hair/earring geometry outside the central skin crop so pink hair ends and flower earrings are not clipped by the seam repair.
-
-The validated final binary is:
-
-- SHA-256: `31d5a06ef664d268c3e35235ea233350f1988e2e9a38c191eb27513f8149d93d`
-- Size: `102,186,072` bytes
-- Geometry: `RenaBody` + `RenaHead`
+**Acceptance status: pending actual-app visual QA.** This candidate must not be merged merely because automated checks are green.
 
 ## 5. Acceptance and verification
 
