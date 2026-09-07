@@ -90,7 +90,7 @@ jobs:
             const response = await page.goto('http://localhost:3000/', { waitUntil: 'domcontentloaded', timeout: 60000 });
             if (!response || !response.ok()) throw new Error(`Home response not OK: ${response?.status()}`);
             await page.waitForTimeout(5000);
-            await page.screenshot({ path: 'rena-v5-app-qa/00-after-5s.png', fullPage: true });
+            await page.screenshot({ path: 'rena-v5-app-qa/00-after-5s.png', fullPage: false, timeout: 120000 });
             fs.writeFileSync('rena-v5-app-qa/pre-ready.json', JSON.stringify({
               stored: await page.evaluate(() => localStorage.getItem('friend-app:v2')),
               bodyText: (await page.locator('body').innerText()).slice(0, 4000),
@@ -108,7 +108,7 @@ jobs:
             }, undefined, { timeout: 600000, polling: 1000 });
 
             if (await page.getByText('読み込めませんでした').count()) {
-              await page.screenshot({ path: 'rena-v5-app-qa/00-model-error.png', fullPage: true });
+              await page.screenshot({ path: 'rena-v5-app-qa/00-model-error.png', fullPage: false, timeout: 120000 });
               throw new Error('Rena model load fallback/error is visible');
             }
             const reset = page.getByRole('button', { name: '表示位置を戻す' });
@@ -123,7 +123,11 @@ jobs:
 
             const shot = async (name) => {
               await page.waitForTimeout(1000);
-              await page.screenshot({ path: `rena-v5-app-qa/${name}.png`, fullPage: true });
+              await page.screenshot({
+                path: `rena-v5-app-qa/${name}.png`,
+                fullPage: false,
+                timeout: 120000,
+              });
             };
             const orbit = async (dx) => {
               await page.mouse.move(center.x, center.y);
